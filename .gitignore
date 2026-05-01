@@ -1,0 +1,73 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+pytest-cache-files-*/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+.venv/
+venv/
+env/
+
+# === Secrets - CRITICAL ===
+.env
+.env.local
+.env.production
+.env.staging
+.env.*.local
+secrets/
+*.pem
+*.key
+rclone.conf
+firebase-credentials.json
+
+# === Database / volumes ===
+*.sqlite
+*.sqlite3
+*.db
+postgres_data/
+redis_data/
+pg_data/
+pgdata/
+redisdata/
+
+# === Backups ===
+backups/
+*.sql
+*.sql.gz
+*.dump
+!alembic/init.sql
+
+# === IDE ===
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# === Logs ===
+*.log
+logs/
+
+# === Docker ===
+.docker/
+
+# === Build artifacts ===
+build/
+dist/
+*.tar.gz
+
+# === Celery ===
+celerybeat-schedule
+celerybeat.pid
+
+# === OS ===
+desktop.ini

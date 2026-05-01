@@ -1,0 +1,121 @@
+"""
+PlantProfile — агрономічний паспорт рослини (FAO-56 параметри).
+
+Зберігає коефіцієнти водоспоживання, температурні пороги, потреби в поживних
+речовинах та вразливість до хвороб. Джерело даних: Gemini AI або ручне введення.
+Таблиця є глобальним кешем — один профіль на всіх користувачів.
+"""
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import String, Float, Integer, DateTime, Text, Index, SmallInteger, UniqueConstraint
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+
+from app.database import Base
+
+
+class PlantProfile(Base):
+    __tablename__ = "plant_profiles"
+    __table_args__ = (
+        UniqueConstraint("name", name="plant_profiles_name_key"),
+        # GIN-індекс для нечіткого пошуку (pg_trgm)
+        Index("ix_plant_profiles_name_trgm", "name", postgresql_using="gin",
+              postgresql_ops={"name": "gin_trgm_ops"}),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    name_normalized: Mapped[str | None] = mapped_column(
+        String(100), index=True,
+        comment="Нормалізована назва (lowercase, без пробілів) для дедуплікації",
+    )
+    category: Mapped[str | None] = mapped_column(String(50), default="Овочі")
+    emoji: Mapped[str | None] = mapped_column(String(10), default="🌱")
+
+    # ── FAO-56 коефіцієнти водоспоживання (Kc) ──────────────────────────
+    kc_initial: Mapped[float] = mapped_column(Float, default=0.40)
+    kc_mid: Mapped[float] = mapped_column(Float, default=1.05)
+    kc_end: Mapped[float] = mapped_column(Float, default=0.70)
+    initial_days: Mapped[int] = mapped_column(Integer, default=20)
+    development_days: Mapped[int] = mapped_column(Integer, default=30)
+    mid_season_days: Mapped[int] = mapped_column(Integer, default=35)
+    late_season_days: Mapped[int] = mapped_column(Integer, default=20)
+
+    # ── Коренева система ─────────────────────────────────────────────────
+    root_depth_initial_cm: Mapped[float] = mapped_column(Float, default=10)
+    root_depth_max_cm: Mapped[float] = mapped_column(Float, default=50)
+
+    # ── Водний баланс ґрунту ─────────────────────────────────────────────
+    field_capacity_mm: Mapped[float] = mapped_column(Float, default=180)
+    wilting_point_mm: Mapped[float] = mapped_column(Float, default=55)
+    critical_depletion: Mapped[float] = mapped_column(Float, default=0.50)
+
+    # ── Температурні пороги (°C) ─────────────────────────────────────────
+    t_min_growth: Mapped[float] = mapped_column(Float, default=8)
+    t_optimal_min: Mapped[float] = mapped_column(Float, default=18)
+    t_optimal_max: Mapped[float] = mapped_column(Float, default=28)
+    t_max_growth: Mapped[float] = mapped_column(Float, default=38)
+    frost_tolerance: Mapped[float] = mapped_column(Float, default=0)
+
+    # ── Потреби в поживних речовинах (г/м²) ──────────────────────────────
+    nitrogen: Mapped[float] = mapped_column(Float, default=2.0)
+    phosphorus: Mapped[float] = mapped_column(Float, default=1.0)
+    potassium: Mapped[float] = mapped_column(Float, default=2.0)
+    magnesium: Mapped[float] = mapped_column(Float, default=0.3)
+    calcium: Mapped[float] = mapped_column(Float, default=0.5)
+
+    # ── Вразливість до хвороб (0.0 = стійка, 1.0 = дуже вразлива) ───────
+    sus_late_blight: Mapped[float] = mapped_column(Float, default=0.3)
+    sus_powdery_mildew: Mapped[float] = mapped_column(Float, default=0.3)
+    sus_downy_mildew: Mapped[float] = mapped_column(Float, default=0.3)
+    sus_botrytis: Mapped[float] = mapped_column(Float, default=0.2)
+
+    # ── Врожай ───────────────────────────────────────────────────────────
+    days_to_harvest_min: Mapped[int] = mapped_column(Integer, default=60)
+    days_to_harvest_max: Mapped[int] = mapped_column(Integer, default=90)
+
+    # ── Метадані ─────────────────────────────────────────────────────────
+    source: Mapped[str | None] = mapped_column(String(20), default="gemini")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence: Mapped[int] = mapped_column(SmallInteger, default=70, server_default="70")
+    validation_warnings: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    def to_dict(self) -> dict:
+        """Серіалізація для API-відповіді та Flutter-клієнта."""
+        return {
+            "name": self.name,
+            "category": self.category or "Овочі",
+            "emoji": self.emoji or "🌱",
+            "source": self.source or "db",
+            "description": self.description,
+            "profile_confidence": self.confidence,
+            "validation_warnings": self.validation_warnings or [],
+            "kc_initial": self.kc_initial, "kc_mid": self.kc_mid, "kc_end": self.kc_end,
+            "initial_days": self.initial_days, "development_days": self.development_days,
+            "mid_season_days": self.mid_season_days, "late_season_days": self.late_season_days,
+            "root_depth_initial_cm": self.root_depth_initial_cm,
+            "root_depth_max_cm": self.root_depth_max_cm,
+            "field_capacity_mm": self.field_capacity_mm,
+            "wilting_point_mm": self.wilting_point_mm,
+            "critical_depletion": self.critical_depletion,
+            "t_min_growth": self.t_min_growth, "t_optimal_min": self.t_optimal_min,
+            "t_optimal_max": self.t_optimal_max, "t_max_growth": self.t_max_growth,
+            "frost_tolerance": self.frost_tolerance,
+            "nitrogen": self.nitrogen, "phosphorus": self.phosphorus,
+            "potassium": self.potassium, "magnesium": self.magnesium,
+            "calcium": self.calcium,
+            "sus_late_blight": self.sus_late_blight,
+            "sus_powdery_mildew": self.sus_powdery_mildew,
+            "sus_downy_mildew": self.sus_downy_mildew,
+            "sus_botrytis": self.sus_botrytis,
+            "days_to_harvest_min": self.days_to_harvest_min,
+            "days_to_harvest_max": self.days_to_harvest_max,
+        }

@@ -1,0 +1,162 @@
+# ═══════════════════════════════════════════════════════════════
+# SmartDacha — Docker Compose (Refactored)
+#
+# FIXES from Code Review:
+#   §4.3 — Redis persistence via volume + appendonly
+#   §4.4 — WEB_CONCURRENCY env for dynamic Gunicorn workers
+#   §4.2 — Note: for production, switch to redbeat scheduler
+# ═══════════════════════════════════════════════════════════════
+
+networks:
+  backend_net:
+    driver: bridge
+  db_net:
+    driver: bridge
+  monitoring_net:
+    driver: bridge
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: smartdacha_api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://smartdacha:${POSTGRES_PASSWORD:-2104}@postgres:5432/smartdacha
+      DATABASE_SYNC_URL: postgresql+psycopg2://smartdacha:${POSTGRES_PASSWORD:-2104}@postgres:5432/smartdacha
+      REDIS_URL: redis://redis:6379
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      # §4.4: set to 2*CPU+1 for your container CPU allocation
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+    volumes:
+      - ./firebase-credentials.json:/app/firebase-credentials.json:ro
+    networks:
+      - backend_net
+      - db_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  celery_worker:
+    build:
+      context: .
+      target: runtime
+    container_name: smartdacha_worker
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4 -Q default,weather,sat,notifications
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://smartdacha:${POSTGRES_PASSWORD:-2104}@postgres:5432/smartdacha
+      DATABASE_SYNC_URL: postgresql+psycopg2://smartdacha:${POSTGRES_PASSWORD:-2104}@postgres:5432/smartdacha
+      REDIS_URL: redis://redis:6379
+    networks:
+      - backend_net
+      - db_net
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+
+  celery_beat:
+    build:
+      context: .
+      target: runtime
+    container_name: smartdacha_beat
+    command: celery -A app.workers.celery_app beat --scheduler redbeat.RedBeatScheduler --loglevel=info
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379
+    networks:
+      - backend_net
+      - db_net
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+
+  flower:
+    build:
+      context: .
+      target: runtime
+    container_name: smartdacha_flower
+    command: celery -A app.workers.celery_app flower --port=5555 --basic-auth=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-change-flower-password}
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    ports:
+      - "5555:5555"
+    environment:
+      REDIS_URL: redis://redis:6379
+    networks:
+      - monitoring_net
+      - db_net
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: smartdacha_postgres
+    environment:
+      POSTGRES_DB: smartdacha
+      POSTGRES_USER: smartdacha
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-2104}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./alembic/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+    expose:
+      - "5432"
+    networks:
+      - db_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartdacha -d smartdacha"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: smartdacha_redis
+    # §4.3 FIX: enable append-only persistence
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    expose:
+      - "6379"
+    volumes:
+      # §4.3 FIX: mount data volume (was missing!)
+      - redisdata:/data
+    networks:
+      - db_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

@@ -1,0 +1,45 @@
+# FIX D-05: .dockerignore зменшує розмір контексту та запобігає витоку секретів
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Секрети — НІКОЛИ не копіювати в образ!
+.env
+.env.local
+.env.*.local
+
+# Git
+.git/
+.gitignore
+
+# Tests і coverage
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# Development
+.pytest_cache/
+pytest-cache-files-*
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Docs
+*.md
+docs/
+
+# Temp
+*.log
+*.tmp

@@ -1,0 +1,83 @@
+name: Backend CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_DB: smartdacha
+          POSTGRES_USER: smartdacha
+          POSTGRES_PASSWORD: smartdacha
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U smartdacha -d smartdacha"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      ENVIRONMENT: staging
+      SECRET_KEY: ci-secret-key-ci-secret-key-ci-secret-key
+      DATABASE_URL: postgresql+asyncpg://smartdacha:smartdacha@localhost:5432/smartdacha
+      DATABASE_SYNC_URL: postgresql+psycopg2://smartdacha:smartdacha@localhost:5432/smartdacha
+      TEST_DATABASE_URL: postgresql+asyncpg://smartdacha:smartdacha@localhost:5432/smartdacha
+      REDIS_URL: redis://localhost:6379
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Check Python syntax
+        run: python -m py_compile app/services/smart_gardener_engine.py app/routers/garden.py app/routers/plots.py app/workers/celery_app.py
+
+      - name: Apply migrations
+        run: alembic upgrade head
+
+      - name: Check migrations match metadata
+        run: alembic check
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Build backend test image
+        run: docker build --target test -t smartdacha-backend-test .
+
+      - name: Run agro regression tests in container
+        run: >
+          docker run --rm --network host
+          -e ENVIRONMENT=staging
+          -e SECRET_KEY=ci-secret-key-ci-secret-key-ci-secret-key
+          -e DATABASE_URL=postgresql+asyncpg://smartdacha:smartdacha@localhost:5432/smartdacha
+          -e DATABASE_SYNC_URL=postgresql+psycopg2://smartdacha:smartdacha@localhost:5432/smartdacha
+          -e TEST_DATABASE_URL=postgresql+asyncpg://smartdacha:smartdacha@localhost:5432/smartdacha
+          -e REDIS_URL=redis://localhost:6379
+          smartdacha-backend-test
+          pytest -q
+          tests/test_agro_analysis_fixture_scenarios.py
+          tests/test_agro_work_plan_regressions.py
+          tests/test_work_plan_service.py
+          tests/test_disease_protection_journal.py
+          tests/test_nutrient_ledger_service.py
