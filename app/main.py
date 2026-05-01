@@ -6,16 +6,19 @@ Includes: auth, plots, plants, journal, watering, diagnostics,
 """
 from contextlib import asynccontextmanager
 import logging
-import sys
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
+from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import settings
 from app.database import async_engine
+from app.observability import configure_logging, init_sentry
+from app.services.redis_service import RedisManager
 
 from app.routers import (
     auth, plots, plants, journal, watering, diagnostics,
@@ -28,28 +31,8 @@ from app.routers.work_plan_router import router as work_plan_router
 from app.routers.admin import router as admin_router
 
 
-def setup_logging():
-    try:
-        from pythonjsonlogger import jsonlogger
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setFormatter(jsonlogger.JsonFormatter(
-            "%(asctime)s %(name)s %(levelname)s %(message)s",
-            rename_fields={"levelname": "level", "asctime": "timestamp"},
-        ))
-        logging.getLogger().handlers = [handler]
-        logging.getLogger().setLevel(logging.DEBUG if settings.DEBUG else logging.INFO)
-    except ImportError:
-        logging.basicConfig(
-            level=logging.DEBUG if settings.DEBUG else logging.INFO,
-            format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-            handlers=[logging.StreamHandler(sys.stdout)],
-        )
-    if not settings.DEBUG:
-        logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
-        logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-
-
-setup_logging()
+configure_logging()
+init_sentry()
 logger = logging.getLogger(__name__)
 
 
@@ -72,12 +55,25 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title=settings.APP_NAME, version="1.0.0",
+    title=settings.APP_NAME,
+    version=settings.RELEASE_VERSION,
     docs_url=None if settings.is_production else "/docs",
     redoc_url=None if settings.is_production else "/redoc",
     openapi_url=None if settings.is_production else "/openapi.json",
     lifespan=lifespan,
 )
+
+if settings.PROMETHEUS_METRICS_ENABLED:
+    Instrumentator(
+        should_group_status_codes=True,
+        should_ignore_untemplated=True,
+        should_respect_env_var=False,
+        excluded_handlers=["/metrics", "/health"],
+    ).instrument(app).expose(
+        app,
+        endpoint="/metrics",
+        include_in_schema=False,
+    )
 
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
@@ -127,9 +123,44 @@ app.include_router(work_plan_router, prefix=PREFIX)
 app.include_router(admin_router)
 
 
+async def _check_database() -> str:
+    try:
+        async with async_engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        return "ok"
+    except Exception as exc:
+        logger.warning("Health database check failed: %s", exc)
+        return "fail"
+
+
+async def _check_redis() -> str:
+    try:
+        redis = await RedisManager.async_client()
+        await redis.ping()
+        return "ok"
+    except Exception as exc:
+        logger.warning("Health redis check failed: %s", exc)
+        return "fail"
+
+
 @app.get("/health", tags=["system"])
 async def health():
-    return {"status": "ok", "app": settings.APP_NAME}
+    return {
+        "status": "ok",
+        "version": settings.RELEASE_VERSION,
+        "environment": settings.ENVIRONMENT,
+        "checks": {
+            "database": await _check_database(),
+            "redis": await _check_redis(),
+        },
+    }
+
+
+@app.get("/sentry-debug", include_in_schema=False)
+async def sentry_debug():
+    if settings.is_production:
+        raise HTTPException(status_code=404)
+    raise RuntimeError("Sentry test error - this is expected during integration checks")
 
 
 @app.get("/", include_in_schema=False)

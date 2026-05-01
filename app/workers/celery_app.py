@@ -12,6 +12,7 @@ from sqlalchemy import delete, select
 from app.config import settings
 from app.database import get_sync_session
 from app.models import GardenAction, Plot, WeatherDailyCache, WeatherZone
+from app.observability import configure_logging, init_sentry
 from app.services.redis_service import get_weather_redis_sync
 from app.services.sat_service import batch_update_sat_for_zone
 from app.services.weather_service import (
@@ -24,6 +25,8 @@ from app.services.weather_service import (
 )
 from app.services.watering_service import batch_generate_watering_recommendations
 
+configure_logging()
+init_sentry()
 logger = logging.getLogger(__name__)
 
 celery_app = Celery(

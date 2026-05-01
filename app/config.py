@@ -77,6 +77,14 @@ class Settings(BaseSettings):
     WEATHER_GRID_PRECISION: int = 1
     GARDEN_ACTION_RETENTION_DAYS: int = 90
 
+    # Observability
+    SENTRY_DSN: str | None = None
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.1
+    SENTRY_PROFILES_SAMPLE_RATE: float = 0.05
+    RELEASE_VERSION: str = "dev"
+    PROMETHEUS_METRICS_ENABLED: bool = True
+    LOG_FORMAT: Literal["json", "text"] = "text"
+
     # ── Deployment ────────────────────────────────────────────────────────────
     WEB_CONCURRENCY: int = 2                     # §4.4: Gunicorn workers
 
