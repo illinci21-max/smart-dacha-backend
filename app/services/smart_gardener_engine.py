@@ -15,7 +15,13 @@ from typing import Any
 from app.services.agro_math import calculate_gdd_delta, cumulative_gdd_calendar_year
 from app.services.fertilizer_profile_service import recommend_fertilizer
 from app.services.lifecycle_types import LifecycleType, PerennialSeason
-from app.services.perennial_phenology import determine_perennial_season, is_plant_productive
+from app.services.perennial_phenology import (
+    determine_perennial_season,
+    get_perennial_disease_pressure,
+    get_perennial_fertilizer_need,
+    get_perennial_frost_sensitivity,
+    is_plant_productive,
+)
 from app.services.protection_profile_service import recommend_protection
 from app.services.soil_profile import SoilProfile
 from app.services.soil_profile_service import PlotOverrides, get_soil_profile, plot_calibration_score
@@ -1240,7 +1246,13 @@ class SmartGardenerEngine:
         diag.nutrient_leaching_risk = self._assess_nutrient_leaching(w_history, soil)
         self._update_seasonal_nutrient_losses(plant, w_history, soil)
         self._generate_watering_task(plant, profile, diag, depletion_pct, w_forecast, w_history, today, soil)
-        self._generate_fertilizing_tasks(plant, profile, diag, phase, w_history, w_forecast, today, soil)
+        if plant.lifecycle_type.is_perennial:
+            season = self._resolve_perennial_season(plant, today)
+            self._generate_perennial_fertilizer_tasks(plant, season, diag, w_forecast, today, soil)
+            self._generate_perennial_protection_tasks(plant, season, diag, w_forecast, today)
+            self._generate_perennial_frost_tasks(plant, season, diag, w_forecast, today)
+        else:
+            self._generate_fertilizing_tasks(plant, profile, diag, phase, w_history, w_forecast, today, soil)
         self._generate_disease_tasks(plant, diag, w_history, w_forecast, today)
         self._generate_cold_stress_tasks(plant, profile, diag, w_today, w_forecast, today)
         self._generate_climate_tasks(plant, profile, diag, w_today, w_forecast, today)
@@ -2113,6 +2125,274 @@ class SmartGardenerEngine:
             confidence=_confidence(conf),
             reasons=reasons,
             reason_groups=reason_groups,
+        ))
+
+    @staticmethod
+    def _resolve_perennial_season(plant: PlantInstance, today: date) -> PerennialSeason:
+        if plant.perennial_season is not None:
+            return plant.perennial_season
+        productive = is_plant_productive(plant.age_years, plant.lifecycle_type)
+        season = determine_perennial_season(today, plant.lifecycle_type, is_productive=productive)
+        plant.perennial_season = season
+        return season
+
+    @staticmethod
+    def _humanize_season(season: PerennialSeason) -> str:
+        return {
+            PerennialSeason.DORMANT_WINTER: "зимовий спокій",
+            PerennialSeason.BUD_BREAK: "розпускання бруньок",
+            PerennialSeason.FLOWERING_FRUIT_SET: "цвітіння і зав'язування плодів",
+            PerennialSeason.FRUIT_DEVELOPMENT: "розвиток плодів",
+            PerennialSeason.HARVEST_RIPENING: "достигання",
+            PerennialSeason.LEAF_FALL: "листопад",
+            PerennialSeason.DORMANT_ENTRY: "входження в спокій",
+        }[season]
+
+    @staticmethod
+    def _humanize_nutrient(nutrient: str) -> str:
+        return {
+            "nitrogen": "азот",
+            "phosphorus": "фосфор",
+            "potassium": "калій",
+            "boron": "бор",
+            "zinc": "цинк",
+            "calcium": "кальцій",
+            "magnesium": "магній",
+        }.get(nutrient, nutrient)
+
+    def _format_amount_g_m2(self, needs: dict[str, float]) -> str:
+        return ", ".join(
+            f"{self._humanize_nutrient(key)} {value:.1f} г/м²"
+            for key, value in needs.items()
+            if value > 0
+        )
+
+    def _format_amount_micros(self, needs: dict[str, float]) -> str:
+        return ", ".join(
+            f"{self._humanize_nutrient(key)} {value * 1000:.0f} мг/м²"
+            for key, value in needs.items()
+            if value > 0
+        )
+
+    def _generate_perennial_fertilizer_tasks(
+        self,
+        plant: PlantInstance,
+        season: PerennialSeason,
+        diag: CellDiagnostics,
+        w_forecast: list[WeatherSnapshot],
+        today: date,
+        soil: SoilProfile,
+    ) -> None:
+        if self._in_cooldown(plant.last_fertilized_at, today, _FERTILIZING_COOLDOWN_DAYS):
+            return
+
+        needs = get_perennial_fertilizer_need(season)
+        if not needs:
+            return
+
+        productive = is_plant_productive(plant.age_years, plant.lifecycle_type)
+        season_label = self._humanize_season(season)
+        v = f" ({plant.variety})" if plant.variety else ""
+        blockers = self._application_blockers(w_forecast, today=today)
+        blocked_messages = self._blocked_reason_messages(blockers, w_forecast, today)
+
+        macros = {key: value for key, value in needs.items() if key in ("nitrogen", "phosphorus", "potassium") and value > 0}
+        micros = {key: value for key, value in needs.items() if key in ("boron", "zinc", "calcium", "magnesium") and value > 0}
+
+        if macros and not self._nutrient_coverage_sufficient(
+            plant,
+            nitrogen_g_m2=macros.get("nitrogen", 0.0),
+            phosphorus_g_m2=macros.get("phosphorus", 0.0),
+            potassium_g_m2=macros.get("potassium", 0.0),
+            soil=soil,
+        ):
+            reason_groups = {
+                "phase": [f"Сезон: {season_label}"],
+                "fertilizer": [f"Потреби г/м² крони: {macros}"],
+                "soil": [f"Тип ґрунту: {soil.label}", f"pH: {soil.ph_label}"],
+                "history": self._nutrient_ledger_lines(plant, soil),
+            }
+            task = GardenTask(
+                TaskType.FERTILIZING,
+                TaskPriority.MEDIUM if productive else TaskPriority.LOW,
+                f"Підживлення дерева: {plant.plant_type}{v}",
+                f"Для фази '{season_label}' потрібна сезонна NPK-підтримка крони.",
+                plant.plant_type,
+                plant.variety,
+                plant.cell_col,
+                plant.cell_row,
+                self._format_amount_g_m2(macros),
+                confidence=70,
+                reasons=[
+                    f"Стадія: {season_label}",
+                    f"Вік: {plant.age_years if plant.age_years is not None else 'невідомий'} років",
+                    "Сезонна потреба у NPK для багаторічної культури",
+                ],
+                reason_groups=reason_groups,
+                recommendation_type="perennial_balanced_npk",
+                constraints=blockers,
+            )
+            if blockers:
+                task.is_hidden = True
+                task.title = f"Підживлення відкласти: {plant.plant_type}{v}"
+                task.description = "Потреба у підживленні є, але погода зараз не підходить для безпечного внесення."
+                task.blocked_reasons = blocked_messages
+                diag.hidden_tasks.append(task)
+            else:
+                diag.tasks.append(task)
+
+        if micros and productive:
+            reason_groups = {
+                "phase": [f"Сезон: {season_label}"],
+                "micronutrient": [f"{key}: {value} г/м²" for key, value in micros.items()],
+                "weather": [],
+            }
+            task = GardenTask(
+                TaskType.FERTILIZING,
+                TaskPriority.HIGH if season in (
+                    PerennialSeason.BUD_BREAK,
+                    PerennialSeason.FLOWERING_FRUIT_SET,
+                ) else TaskPriority.MEDIUM,
+                f"Мікродобрива: {plant.plant_type}{v}",
+                f"Фаза '{season_label}' критична для бору, цинку, кальцію або магнію.",
+                plant.plant_type,
+                plant.variety,
+                plant.cell_col,
+                plant.cell_row,
+                self._format_amount_micros(micros),
+                confidence=72,
+                reasons=[
+                    f"Стадія: {season_label}",
+                    "Рекомендоване позакореневе підживлення",
+                    "Особливо важливо під час бутонізації, цвітіння та наливу плодів",
+                ],
+                reason_groups=reason_groups,
+                recommendation_type="perennial_micronutrient_foliar",
+                constraints=blockers,
+            )
+            if blockers:
+                task.is_hidden = True
+                task.title = f"Мікродобрива відкласти: {plant.plant_type}{v}"
+                task.description = "Листкове підживлення доречне, але погода зараз небезпечна для обробки."
+                task.blocked_reasons = blocked_messages
+                diag.hidden_tasks.append(task)
+            else:
+                diag.tasks.append(task)
+
+    def _generate_perennial_protection_tasks(
+        self,
+        plant: PlantInstance,
+        season: PerennialSeason,
+        diag: CellDiagnostics,
+        w_forecast: list[WeatherSnapshot],
+        today: date,
+    ) -> None:
+        if self._in_cooldown(plant.last_disease_at, today, _DISEASE_COOLDOWN_DAYS):
+            return
+        pressures = {
+            disease: pressure
+            for disease, pressure in get_perennial_disease_pressure(season).items()
+            if pressure >= 0.6
+        }
+        if not pressures:
+            return
+
+        disease, pressure = max(pressures.items(), key=lambda item: item[1])
+        names = {
+            "apple_scab": "парші",
+            "fire_blight": "бактеріального опіку",
+            "monilinia": "моніліозу",
+            "powdery_mildew": "борошнистої роси",
+            "alternaria": "альтернаріозу",
+        }
+        season_label = self._humanize_season(season)
+        v = f" ({plant.variety})" if plant.variety else ""
+        blockers = self._application_blockers(w_forecast, today=today)
+        blocked_messages = self._blocked_reason_messages(blockers, w_forecast, today)
+        task = GardenTask(
+            TaskType.DISEASE_PROTECTION,
+            TaskPriority.HIGH if pressure >= 0.8 else TaskPriority.MEDIUM,
+            f"Захист від {names.get(disease, disease)}: {plant.plant_type}{v}",
+            f"У фазі '{season_label}' для багаторічних культур підвищений сезонний ризик {names.get(disease, disease)}.",
+            plant.plant_type,
+            plant.variety,
+            plant.cell_col,
+            plant.cell_row,
+            confidence=70,
+            reasons=[
+                f"Сезон: {season_label}",
+                f"Сезонний ризик: {pressure * 100:.0f}%",
+                "Модель coarse: уточнюється погодою та журналом обробок",
+            ],
+            reason_groups={
+                "phase": [f"Сезон: {season_label}"],
+                "protection": [f"Проблема: {names.get(disease, disease)}", f"Ризик: {pressure * 100:.0f}%"],
+                "weather": [],
+            },
+            recommendation_type=f"perennial_{disease}_prevention",
+            constraints=blockers,
+        )
+        if blockers:
+            task.is_hidden = True
+            task.title = f"Захист відкласти: {names.get(disease, disease)} — {plant.plant_type}{v}"
+            task.description = "Профілактична обробка доречна, але погода зараз не підходить для безпечного внесення."
+            task.blocked_reasons = blocked_messages
+            diag.hidden_tasks.append(task)
+        else:
+            diag.tasks.append(task)
+
+    def _generate_perennial_frost_tasks(
+        self,
+        plant: PlantInstance,
+        season: PerennialSeason,
+        diag: CellDiagnostics,
+        w_forecast: list[WeatherSnapshot],
+        today: date,
+    ) -> None:
+        if self._in_cooldown(plant.last_frost_protection_at, today, _FROST_COOLDOWN_DAYS):
+            return
+        sensitivity = get_perennial_frost_sensitivity(season)
+        if sensitivity < 0.5:
+            return
+        forecast_3d = w_forecast[:3]
+        if not forecast_3d:
+            return
+        coldest_idx = min(range(len(forecast_3d)), key=lambda index: forecast_3d[index].temp_min)
+        coldest = forecast_3d[coldest_idx]
+        if coldest.temp_min > 2:
+            return
+        if not (coldest.temp_min <= -2 or (coldest.temp_min <= 0 and sensitivity >= 0.8)):
+            return
+
+        days_until = max(1, coldest_idx + 1)
+        season_label = self._humanize_season(season)
+        v = f" ({plant.variety})" if plant.variety else ""
+        diag.tasks.append(GardenTask(
+            TaskType.FROST_PROTECTION,
+            TaskPriority.HIGH,
+            f"Заморозок {coldest.temp_min:.0f}°C: захист {plant.plant_type}{v}",
+            f"Прогнозується заморозок у фазі '{season_label}'. Для квітів і зав'язі це критичне вікно.",
+            plant.plant_type,
+            plant.variety,
+            plant.cell_col,
+            plant.cell_row,
+            due_date=coldest.date,
+            confidence=88,
+            reasons=[
+                f"Чутливість фази: {int(sensitivity * 100)}%",
+                f"Прогноз: {coldest.temp_min:.0f}°C через {days_until} дн.",
+                "При -2°C у фазі цвітіння можлива втрата значної частини зав'язі",
+            ],
+            reason_groups={
+                "weather": [f"Прогноз заморозку: {coldest.temp_min:.0f}°C"],
+                "phase": [f"Чутлива стадія: {season_label}"],
+            },
+            recommendation_type="perennial_frost_protection",
+            constraints=[
+                "Дощування крони перед сходом сонця",
+                "Димлення у безвітряну ніч",
+                "Агроволокно для малих дерев або кущів",
+            ],
         ))
 
     def _generate_fertilizing_tasks(

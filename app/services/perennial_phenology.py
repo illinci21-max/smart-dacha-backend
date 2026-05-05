@@ -73,3 +73,95 @@ def is_plant_productive(
         lifecycle, 4
     )
     return age_years >= threshold
+
+
+# Coarse fertilizer/protection needs by perennial season.
+# Quantities are per square meter of crown area until cultivar BBCH data exists.
+PERENNIAL_FERTILIZER_BY_SEASON: dict[PerennialSeason, dict[str, float]] = {
+    PerennialSeason.DORMANT_WINTER: {},
+    PerennialSeason.BUD_BREAK: {
+        "nitrogen": 6.0,
+        "phosphorus": 3.0,
+        "potassium": 3.0,
+        "boron": 0.04,
+        "zinc": 0.03,
+    },
+    PerennialSeason.FLOWERING_FRUIT_SET: {
+        "nitrogen": 2.0,
+        "phosphorus": 4.0,
+        "potassium": 4.0,
+        "boron": 0.06,
+        "zinc": 0.04,
+        "calcium": 2.0,
+    },
+    PerennialSeason.FRUIT_DEVELOPMENT: {
+        "nitrogen": 3.0,
+        "phosphorus": 2.0,
+        "potassium": 8.0,
+        "calcium": 2.5,
+        "magnesium": 0.8,
+    },
+    PerennialSeason.HARVEST_RIPENING: {
+        "nitrogen": 0.0,
+        "phosphorus": 1.0,
+        "potassium": 5.0,
+    },
+    PerennialSeason.LEAF_FALL: {
+        "phosphorus": 4.0,
+        "potassium": 3.0,
+    },
+    PerennialSeason.DORMANT_ENTRY: {},
+}
+
+
+PERENNIAL_DISEASE_PRESSURE: dict[PerennialSeason, dict[str, float]] = {
+    PerennialSeason.DORMANT_WINTER: {},
+    PerennialSeason.BUD_BREAK: {
+        "apple_scab": 0.6,
+        "powdery_mildew": 0.3,
+    },
+    PerennialSeason.FLOWERING_FRUIT_SET: {
+        "apple_scab": 0.85,
+        "fire_blight": 0.7,
+        "monilinia": 0.6,
+    },
+    PerennialSeason.FRUIT_DEVELOPMENT: {
+        "apple_scab": 0.5,
+        "powdery_mildew": 0.5,
+        "alternaria": 0.4,
+    },
+    PerennialSeason.HARVEST_RIPENING: {
+        "monilinia": 0.7,
+        "alternaria": 0.5,
+    },
+    PerennialSeason.LEAF_FALL: {
+        "apple_scab": 0.4,
+    },
+    PerennialSeason.DORMANT_ENTRY: {},
+}
+
+
+PERENNIAL_FROST_SENSITIVITY: dict[PerennialSeason, float] = {
+    PerennialSeason.DORMANT_WINTER: 0.05,
+    PerennialSeason.BUD_BREAK: 0.40,
+    PerennialSeason.FLOWERING_FRUIT_SET: 0.95,
+    PerennialSeason.FRUIT_DEVELOPMENT: 0.30,
+    PerennialSeason.HARVEST_RIPENING: 0.20,
+    PerennialSeason.LEAF_FALL: 0.10,
+    PerennialSeason.DORMANT_ENTRY: 0.05,
+}
+
+
+def get_perennial_fertilizer_need(season: PerennialSeason) -> dict[str, float]:
+    """Return seasonal fertilizer needs in g/m2 of crown area."""
+    return PERENNIAL_FERTILIZER_BY_SEASON.get(season, {}).copy()
+
+
+def get_perennial_disease_pressure(season: PerennialSeason) -> dict[str, float]:
+    """Return coarse disease pressure hints for the season."""
+    return PERENNIAL_DISEASE_PRESSURE.get(season, {}).copy()
+
+
+def get_perennial_frost_sensitivity(season: PerennialSeason) -> float:
+    """Return frost sensitivity from 0 to 1 for the season."""
+    return PERENNIAL_FROST_SENSITIVITY.get(season, 0.0)
