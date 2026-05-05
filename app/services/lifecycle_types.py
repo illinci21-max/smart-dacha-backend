@@ -44,3 +44,19 @@ class LifecycleType(str, Enum):
     @property
     def has_dormancy(self) -> bool:
         return self.is_perennial
+
+
+class PerennialSeason(str, Enum):
+    """Coarse seasonal phase for perennial plants.
+
+    Used until full BBCH-stage modeling is implemented.
+    Calendar-driven mapping for Northern Hemisphere temperate climate.
+    """
+
+    DORMANT_WINTER = "dormant_winter"
+    BUD_BREAK = "bud_break"
+    FLOWERING_FRUIT_SET = "flowering_fruit_set"
+    FRUIT_DEVELOPMENT = "fruit_development"
+    HARVEST_RIPENING = "harvest_ripening"
+    LEAF_FALL = "leaf_fall"
+    DORMANT_ENTRY = "dormant_entry"

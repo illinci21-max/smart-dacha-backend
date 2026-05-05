@@ -14,6 +14,8 @@ from typing import Any
 
 from app.services.agro_math import calculate_gdd_delta
 from app.services.fertilizer_profile_service import recommend_fertilizer
+from app.services.lifecycle_types import LifecycleType, PerennialSeason
+from app.services.perennial_phenology import determine_perennial_season, is_plant_productive
 from app.services.protection_profile_service import recommend_protection
 from app.services.soil_profile import SoilProfile
 from app.services.soil_profile_service import PlotOverrides, get_soil_profile, plot_calibration_score
@@ -24,6 +26,19 @@ class GrowthPhase(str, Enum):
     DEVELOPMENT = "development"
     MID_SEASON = "mid_season"
     LATE_SEASON = "late_season"
+
+
+def _perennial_season_to_growth_phase(season: PerennialSeason) -> GrowthPhase:
+    """Map coarse perennial season to the nearest existing annual phase."""
+    return {
+        PerennialSeason.DORMANT_WINTER: GrowthPhase.LATE_SEASON,
+        PerennialSeason.BUD_BREAK: GrowthPhase.INITIAL,
+        PerennialSeason.FLOWERING_FRUIT_SET: GrowthPhase.DEVELOPMENT,
+        PerennialSeason.FRUIT_DEVELOPMENT: GrowthPhase.MID_SEASON,
+        PerennialSeason.HARVEST_RIPENING: GrowthPhase.LATE_SEASON,
+        PerennialSeason.LEAF_FALL: GrowthPhase.LATE_SEASON,
+        PerennialSeason.DORMANT_ENTRY: GrowthPhase.LATE_SEASON,
+    }[season]
 
 
 class TaskType(str, Enum):
@@ -221,6 +236,9 @@ class PlantInstance:
     plant_emoji: str = ""
     category: str = ""
     age_days: int = 0
+    lifecycle_type: LifecycleType = LifecycleType.ANNUAL
+    age_years: int | None = None
+    perennial_season: PerennialSeason | None = None
     cumulative_gdd: float = 0
     growth_phase: GrowthPhase = GrowthPhase.INITIAL
     current_kc: float = 0.35
@@ -1040,7 +1058,25 @@ class SmartGardenerEngine:
         return _round(gdd, 1)
 
     @staticmethod
-    def determine_growth_phase(age_days: int, kc: KcStages, cumulative_gdd: float | None = None, t_base: float | None = None) -> tuple[GrowthPhase, float]:
+    def determine_growth_phase(
+        age_days: int,
+        kc: KcStages,
+        cumulative_gdd: float | None = None,
+        t_base: float | None = None,
+        plant: PlantInstance | None = None,
+        today: date | None = None,
+    ) -> tuple[GrowthPhase, float]:
+        if plant is not None and today is not None and plant.lifecycle_type.is_perennial:
+            is_productive = is_plant_productive(plant.age_years, plant.lifecycle_type)
+            season = determine_perennial_season(
+                today,
+                plant.lifecycle_type,
+                is_productive=is_productive,
+            )
+            plant.perennial_season = season
+            phase = _perennial_season_to_growth_phase(season)
+            return phase, SmartGardenerEngine._kc_for_observed_phase(phase, kc)
+
         if cumulative_gdd is not None and t_base is not None:
             avg_daily_gdd = 15.0
             gdd_initial = kc.initial_days * avg_daily_gdd
@@ -1117,7 +1153,14 @@ class SmartGardenerEngine:
                 plant.age_days,
                 profile.t_max_growth,
             )
-        phase, kc_val = self.determine_growth_phase(plant.age_days, profile.kc, plant.cumulative_gdd, profile.t_base)
+        phase, kc_val = self.determine_growth_phase(
+            plant.age_days,
+            profile.kc,
+            plant.cumulative_gdd,
+            profile.t_base,
+            plant=plant,
+            today=today,
+        )
         plant.growth_phase = phase
         plant.current_kc = kc_val
         if plant.observed_growth_phase:
@@ -2672,6 +2715,11 @@ class SmartGardenerEngine:
         for data in cells:
             if not data.get("plant_type"):
                 continue
+            try:
+                lifecycle = LifecycleType(str(data.get("lifecycle_type") or "annual"))
+            except ValueError:
+                lifecycle = LifecycleType.ANNUAL
+            planting_year = _to_int(data.get("planting_year"), 0)
             plant = PlantInstance(
                 cell_col=_to_int(data.get("col"), 0),
                 cell_row=_to_int(data.get("row"), 0),
@@ -2681,6 +2729,8 @@ class SmartGardenerEngine:
                 plant_icon=str(data.get("plant_icon") or ""),
                 plant_emoji=str(data.get("plant_emoji") or ""),
                 category=str(data.get("category") or ""),
+                lifecycle_type=lifecycle,
+                age_years=(today.year - planting_year) if planting_year else None,
             )
             plant.calculate_age(today)
             plants.append(plant)
