@@ -8,6 +8,7 @@ from typing import Optional
 import logging
 
 from app.services.agro_math import calculate_gdd_delta
+from app.services.lifecycle_types import LifecycleType
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,29 @@ def compute_sat_with_topup(
 
     `plant` is intentionally duck-typed so tests and routers can pass ORM
     objects or light DTOs. Weather items must expose temp_min/temp_max.
+
+    Annual plants are anchored to planted_date. Perennials are anchored to
+    January 1 of the current year, because their phenology resets by season,
+    not by original planting date.
     """
+    try:
+        lifecycle = LifecycleType(str(getattr(plant, "lifecycle_type", "annual") or "annual"))
+    except ValueError:
+        lifecycle = LifecycleType.ANNUAL
+
+    if lifecycle.is_perennial:
+        return _compute_sat_perennial(plant, crop_profile, weather_cache, today)
+    return _compute_sat_annual(plant, crop_profile, weather_cache, today, max_topup_days)
+
+
+def _compute_sat_annual(
+    plant,
+    crop_profile,
+    weather_cache: dict[date, object],
+    today: date,
+    max_topup_days: int = 14,
+) -> float:
+    """Existing annual SAT logic: DB baseline plus capped top-up window."""
     baseline = float(getattr(plant, "sat_accumulated", None) or 0.0)
     planted_date = getattr(plant, "planted_date", None)
     last_updated = getattr(plant, "sat_last_updated_at", None)
@@ -75,6 +98,39 @@ def compute_sat_with_topup(
     start_day = last_updated + timedelta(days=1)
     end_day = last_updated + timedelta(days=delta_days)
     return baseline + _compute_sat_delta_range(start_day, end_day, weather_cache, t_base, t_upper)
+
+
+def _compute_sat_perennial(
+    plant,
+    crop_profile,
+    weather_cache: dict[date, object],
+    today: date,
+) -> float:
+    """Compute perennial SAT from Jan 1 of the current calendar year."""
+    if today is None:
+        today = date.today()
+
+    year_start = date(today.year, 1, 1)
+    last_updated = getattr(plant, "sat_last_updated_at", None)
+    t_base = float(getattr(crop_profile, "t_base", 10.0) or 10.0)
+    t_upper = getattr(crop_profile, "t_max_growth", None)
+    if t_upper is not None:
+        t_upper = float(t_upper)
+
+    if last_updated is None or last_updated < year_start:
+        baseline = 0.0
+        topup_start = year_start
+    else:
+        baseline = float(getattr(plant, "sat_accumulated", None) or 0.0)
+        topup_start = last_updated + timedelta(days=1)
+
+    return baseline + _compute_sat_delta_range(
+        topup_start,
+        today,
+        weather_cache,
+        t_base,
+        t_upper,
+    )
 
 
 def _compute_sat_delta_range(

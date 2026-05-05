@@ -12,7 +12,7 @@ from enum import Enum
 import math
 from typing import Any
 
-from app.services.agro_math import calculate_gdd_delta
+from app.services.agro_math import calculate_gdd_delta, cumulative_gdd_calendar_year
 from app.services.fertilizer_profile_service import recommend_fertilizer
 from app.services.lifecycle_types import LifecycleType, PerennialSeason
 from app.services.perennial_phenology import determine_perennial_season, is_plant_productive
@@ -240,6 +240,7 @@ class PlantInstance:
     age_years: int | None = None
     perennial_season: PerennialSeason | None = None
     cumulative_gdd: float = 0
+    gdd_anchor: str = "planting_date"
     growth_phase: GrowthPhase = GrowthPhase.INITIAL
     current_kc: float = 0.35
     root_depth_cm: float = 10
@@ -1145,6 +1146,15 @@ class SmartGardenerEngine:
         diag = CellDiagnostics(plant=plant, profile=profile)
         if cumulative_gdd_override is not None:
             plant.cumulative_gdd = cumulative_gdd_override
+            plant.gdd_anchor = "calendar_jan1" if plant.lifecycle_type.is_perennial else "planting_date"
+        elif plant.lifecycle_type.is_perennial:
+            plant.cumulative_gdd = cumulative_gdd_calendar_year(
+                [*w_history, w_today],
+                today,
+                profile.t_base,
+                profile.t_max_growth,
+            )
+            plant.gdd_anchor = "calendar_jan1"
         else:
             plant.cumulative_gdd = self.accumulate_gdd(
                 w_history,
@@ -1153,6 +1163,7 @@ class SmartGardenerEngine:
                 plant.age_days,
                 profile.t_max_growth,
             )
+            plant.gdd_anchor = "planting_date"
         phase, kc_val = self.determine_growth_phase(
             plant.age_days,
             profile.kc,
