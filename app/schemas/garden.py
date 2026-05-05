@@ -92,6 +92,8 @@ class GardenObservationCreate(BaseModel):
     leaf_condition: str | None = None
     symptoms: list[str] = Field(default_factory=list)
     growth_phase: str | None = None
+    species_filter: list[str] | None = None
+    observed_perennial_season: str | None = None
     notes: str | None = None
     observed_at: datetime | None = None
 

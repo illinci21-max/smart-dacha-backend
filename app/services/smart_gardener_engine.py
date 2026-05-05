@@ -200,6 +200,7 @@ class ManualObservation:
     scope: str = "plot"
     plant_type: str | None = None
     variety: str | None = None
+    species_filter: list[str] | None = None
     cell_col: int | None = None
     cell_row: int | None = None
     soil_moisture_pct: int | None = None
@@ -207,6 +208,7 @@ class ManualObservation:
     leaf_condition: str | None = None
     symptoms: list[str] = field(default_factory=list)
     growth_phase: str | None = None
+    observed_perennial_season: str | None = None
     notes: str | None = None
     observed_at: datetime = field(default_factory=datetime.now)
 
@@ -216,11 +218,15 @@ class ManualObservation:
             score += 4
         if self.plant_type:
             score += 2
+        if self.species_filter:
+            score += 2
         if self.variety:
             score += 1
         return score
 
     def applies_to(self, plant: "PlantInstance") -> bool:
+        if self.species_filter and plant.plant_type not in self.species_filter:
+            return False
         if self.plant_type and self.plant_type != plant.plant_type:
             return False
         if self.variety and self.variety != plant.variety:
@@ -245,6 +251,7 @@ class PlantInstance:
     lifecycle_type: LifecycleType = LifecycleType.ANNUAL
     age_years: int | None = None
     perennial_season: PerennialSeason | None = None
+    perennial_season_source: str = "auto-calendar"
     cumulative_gdd: float = 0
     gdd_anchor: str = "planting_date"
     growth_phase: GrowthPhase = GrowthPhase.INITIAL
@@ -803,6 +810,7 @@ class SmartGardenerEngine:
                 lat,
                 elevation,
                 cumulative_gdd_override=sat_overrides.get((plant.cell_col, plant.cell_row)),
+                observations=observations,
             )
             tasks.extend(diag.tasks)
             hidden_tasks.extend(diag.hidden_tasks)
@@ -879,6 +887,11 @@ class SmartGardenerEngine:
             scope=str(data.get("scope") or "plot"),
             plant_type=data.get("plant_type"),
             variety=data.get("variety"),
+            species_filter=(
+                [str(item).strip() for item in data.get("species_filter", []) if str(item).strip()]
+                if isinstance(data.get("species_filter"), list)
+                else None
+            ),
             cell_col=data.get("cell_col"),
             cell_row=data.get("cell_row"),
             soil_moisture_pct=pct,
@@ -886,6 +899,7 @@ class SmartGardenerEngine:
             leaf_condition=data.get("leaf_condition"),
             symptoms=[str(item).strip() for item in symptoms if str(item).strip()],
             growth_phase=data.get("growth_phase"),
+            observed_perennial_season=data.get("observed_perennial_season"),
             notes=data.get("notes"),
             observed_at=_parse_dt(data.get("observed_at")),
         )
@@ -1148,6 +1162,7 @@ class SmartGardenerEngine:
         latitude_deg: float,
         elevation_m: float,
         cumulative_gdd_override: float | None = None,
+        observations: list[ManualObservation] | None = None,
     ) -> CellDiagnostics:
         diag = CellDiagnostics(plant=plant, profile=profile)
         if cumulative_gdd_override is not None:
@@ -1189,6 +1204,14 @@ class SmartGardenerEngine:
                 plant.current_kc = kc_val
             except ValueError:
                 pass
+        if plant.lifecycle_type.is_perennial:
+            season, season_source = self._resolve_perennial_season(plant, today, observations)
+            plant.perennial_season = season
+            plant.perennial_season_source = season_source
+            phase = _perennial_season_to_growth_phase(season)
+            kc_val = self._kc_for_observed_phase(phase, profile.kc)
+            plant.growth_phase = phase
+            plant.current_kc = kc_val
         plant.root_depth_cm = self.calculate_root_depth(plant.age_days, profile)
 
         diag.et0_mm = et0_today
@@ -1247,7 +1270,7 @@ class SmartGardenerEngine:
         self._update_seasonal_nutrient_losses(plant, w_history, soil)
         self._generate_watering_task(plant, profile, diag, depletion_pct, w_forecast, w_history, today, soil)
         if plant.lifecycle_type.is_perennial:
-            season = self._resolve_perennial_season(plant, today)
+            season = plant.perennial_season or self._resolve_perennial_season(plant, today, observations)[0]
             self._generate_perennial_fertilizer_tasks(plant, season, diag, w_forecast, today, soil)
             self._generate_perennial_protection_tasks(plant, season, diag, w_forecast, today)
             self._generate_perennial_frost_tasks(plant, season, diag, w_forecast, today)
@@ -2128,13 +2151,76 @@ class SmartGardenerEngine:
         ))
 
     @staticmethod
-    def _resolve_perennial_season(plant: PlantInstance, today: date) -> PerennialSeason:
-        if plant.perennial_season is not None:
-            return plant.perennial_season
+    def _observation_value(observation: ManualObservation | dict, key: str, default: Any = None) -> Any:
+        if isinstance(observation, dict):
+            return observation.get(key, default)
+        return getattr(observation, key, default)
+
+    def _resolve_perennial_season(
+        self,
+        plant: PlantInstance,
+        today: date,
+        observations: list[ManualObservation | dict] | None = None,
+    ) -> tuple[PerennialSeason, str]:
         productive = is_plant_productive(plant.age_years, plant.lifecycle_type)
-        season = determine_perennial_season(today, plant.lifecycle_type, is_productive=productive)
-        plant.perennial_season = season
-        return season
+        auto_season = determine_perennial_season(today, plant.lifecycle_type, is_productive=productive)
+        if not observations:
+            return auto_season, "auto-calendar"
+
+        relevant: list[ManualObservation | dict] = []
+        for observation in observations:
+            observed_season = self._observation_value(observation, "observed_perennial_season")
+            if not observed_season:
+                continue
+
+            species_filter = self._observation_value(observation, "species_filter")
+            if species_filter and plant.plant_type not in species_filter:
+                continue
+
+            plant_type = self._observation_value(observation, "plant_type")
+            if plant_type and plant_type != plant.plant_type:
+                continue
+
+            variety = self._observation_value(observation, "variety")
+            if variety and variety != plant.variety:
+                continue
+
+            scope = self._observation_value(observation, "scope", "plot")
+            cell_col = self._observation_value(observation, "cell_col")
+            cell_row = self._observation_value(observation, "cell_row")
+            if scope == "single" or cell_col is not None or cell_row is not None:
+                if cell_col is not None and cell_col != plant.cell_col:
+                    continue
+                if cell_row is not None and cell_row != plant.cell_row:
+                    continue
+
+            relevant.append(observation)
+
+        if not relevant:
+            return auto_season, "auto-calendar"
+
+        def observed_at_dt(item: ManualObservation | dict) -> datetime:
+            value = self._observation_value(item, "observed_at", datetime.min)
+            if isinstance(value, datetime):
+                return value
+            return _parse_dt(value)
+
+        latest = max(relevant, key=observed_at_dt)
+        observed_at = observed_at_dt(latest)
+        age_days = (today - observed_at.date()).days
+        if age_days > 21:
+            return auto_season, f"auto-calendar-stale-obs-{age_days}d"
+
+        try:
+            observed = PerennialSeason(str(self._observation_value(latest, "observed_perennial_season")))
+        except ValueError:
+            return auto_season, "auto-calendar-invalid-obs"
+
+        if age_days <= 7:
+            return observed, "user-observation"
+        if auto_season != observed:
+            return auto_season, f"user-observation-aged-{age_days}d-superseded"
+        return observed, f"user-observation-aged-{age_days}d"
 
     @staticmethod
     def _humanize_season(season: PerennialSeason) -> str:

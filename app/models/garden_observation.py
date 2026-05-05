@@ -41,6 +41,8 @@ class GardenObservation(Base):
     leaf_condition: Mapped[str | None] = mapped_column(String(40))
     symptoms: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
     growth_phase: Mapped[str | None] = mapped_column(String(30))
+    species_filter: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True, default=None)
+    observed_perennial_season: Mapped[str | None] = mapped_column(String(40))
     notes: Mapped[str | None] = mapped_column(Text)
     observed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), index=True

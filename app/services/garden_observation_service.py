@@ -16,6 +16,8 @@ def observation_to_engine_payload(observation: GardenObservation) -> dict:
         "leaf_condition": observation.leaf_condition,
         "symptoms": observation.symptoms or [],
         "growth_phase": observation.growth_phase,
+        "species_filter": observation.species_filter or None,
+        "observed_perennial_season": observation.observed_perennial_season,
         "notes": observation.notes,
         "observed_at": observation.observed_at,
     }

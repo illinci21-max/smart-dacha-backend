@@ -471,6 +471,8 @@ async def get_garden_observations(
             leaf_condition=item.leaf_condition,
             symptoms=item.symptoms or [],
             growth_phase=item.growth_phase,
+            species_filter=item.species_filter,
+            observed_perennial_season=item.observed_perennial_season,
             notes=item.notes,
             observed_at=item.observed_at,
             created_at=item.created_at,
@@ -491,6 +493,11 @@ async def create_garden_observation(
 ):
     plot = await _get_plot_or_404(plot_id, current_user.id, db)
     symptoms = [str(item).strip() for item in data.symptoms if str(item).strip()]
+    species_filter = (
+        [str(item).strip() for item in data.species_filter if str(item).strip()]
+        if data.species_filter
+        else None
+    )
     observation = GardenObservation(
         plot_id=plot.id,
         user_id=current_user.id,
@@ -504,6 +511,8 @@ async def create_garden_observation(
         leaf_condition=data.leaf_condition,
         symptoms=symptoms,
         growth_phase=data.growth_phase,
+        species_filter=species_filter,
+        observed_perennial_season=data.observed_perennial_season,
         notes=data.notes,
         observed_at=data.observed_at or datetime.now(timezone.utc),
     )
@@ -523,6 +532,8 @@ async def create_garden_observation(
         leaf_condition=observation.leaf_condition,
         symptoms=observation.symptoms or [],
         growth_phase=observation.growth_phase,
+        species_filter=observation.species_filter,
+        observed_perennial_season=observation.observed_perennial_season,
         notes=observation.notes,
         observed_at=observation.observed_at,
         created_at=observation.created_at,
