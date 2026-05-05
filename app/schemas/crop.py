@@ -4,12 +4,15 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.services.lifecycle_types import LifecycleType
+
 
 class CropCreate(BaseModel):
     name_uk: str = Field(max_length=100)
     name_en: str | None = None
     scientific_name: str | None = None
     category: str | None = None
+    lifecycle_type: LifecycleType = LifecycleType.ANNUAL
     t_base: float = Field(10.0, ge=0, le=30)
     t_optimal_min: float | None = None
     t_optimal_max: float | None = None
@@ -26,6 +29,7 @@ class CropListOut(BaseModel):
     name_uk: str
     name_en: str | None
     category: str | None
+    lifecycle_type: str = "annual"
     icon_url: str | None
     t_base: float
     sun_requirement: str | None

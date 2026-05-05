@@ -3,6 +3,8 @@ from datetime import datetime, date
 from decimal import Decimal
 import uuid
 
+from app.services.lifecycle_types import LifecycleType
+
 
 class PlantCreate(BaseModel):
     # FIX: id має default=uuid.uuid4 — клієнт може не передавати
@@ -11,6 +13,8 @@ class PlantCreate(BaseModel):
     name: str | None = None
     quantity: int = 1
     planted_date: date | None = None
+    lifecycle_type: LifecycleType = LifecycleType.ANNUAL
+    planting_year: int | None = None
 
     @field_validator("id", mode="before")
     @classmethod
@@ -22,6 +26,8 @@ class PlantUpdate(BaseModel):
     name: str | None = None
     quantity: int | None = None
     planted_date: date | None = None
+    lifecycle_type: LifecycleType | None = None
+    planting_year: int | None = None
 
 
 class PlantResponse(BaseModel):
@@ -32,6 +38,9 @@ class PlantResponse(BaseModel):
     name: str | None
     quantity: int
     planted_date: date | None
+    lifecycle_type: str = "annual"
+    planting_year: int | None = None
+    age_years: int | None = None
     sat_accumulated: Decimal
     sat_last_updated_at: date | None
     current_growth_stage: str | None

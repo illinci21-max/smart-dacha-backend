@@ -18,6 +18,12 @@ class CropCatalog(Base):
     scientific_name: Mapped[str | None] = mapped_column(String(150))
     category: Mapped[str | None] = mapped_column(String(50))
     emoji: Mapped[str | None] = mapped_column(String(10))
+    lifecycle_type: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+        default="annual",
+        server_default="annual",
+    )
 
     # Агрономічні норми
     t_base: Mapped[Decimal] = mapped_column(Numeric(4, 1), default=10.0,

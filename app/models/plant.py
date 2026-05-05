@@ -2,10 +2,11 @@
 import uuid
 from datetime import datetime, date
 from decimal import Decimal
-from sqlalchemy import String, Numeric, DateTime, Date, Boolean, ForeignKey, SmallInteger, func
+from sqlalchemy import String, Numeric, DateTime, Date, Boolean, ForeignKey, Integer, SmallInteger, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
+from app.services.lifecycle_types import LifecycleType
 
 
 class Plant(Base):
@@ -30,6 +31,13 @@ class Plant(Base):
     name: Mapped[str | None] = mapped_column(String(100))
     quantity: Mapped[int] = mapped_column(SmallInteger, default=1)
     planted_date: Mapped[date | None] = mapped_column(Date)
+    lifecycle_type: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+        default="annual",
+        server_default="annual",
+    )
+    planting_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     sat_accumulated: Mapped[Decimal] = mapped_column(Numeric(8, 2), default=0.0)
     sat_reset_date: Mapped[date | None] = mapped_column(Date)
@@ -60,3 +68,18 @@ class Plant(Base):
     watering_recs: Mapped[list["WateringRecommendation"]] = relationship(
         back_populates="plant", lazy="select"
     )
+
+    @property
+    def lifecycle(self) -> LifecycleType:
+        """Typed enum accessor."""
+        try:
+            return LifecycleType(self.lifecycle_type)
+        except ValueError:
+            return LifecycleType.ANNUAL
+
+    @property
+    def age_years(self) -> int | None:
+        """Years since planting, used by perennial logic."""
+        if self.planting_year is None:
+            return None
+        return max(0, date.today().year - self.planting_year)
