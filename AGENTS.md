@@ -34,6 +34,14 @@ them alone.
 Use conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `ci:`, etc.
 One logical change per commit. Show diff before pushing.
 
+## Companion Repos
+
+- Backend (this): github.com/illinci21-max/smart-dacha-backend
+- Frontend Flutter app: github.com/illinci21-max/smart-dacha-frontend
+
+Cross-cutting changes require commits in both repos with a cross-reference in
+the commit message, for example: `Refs: smart-dacha-frontend@<sha>`.
+
 ## After Each Task
 
 1. Run stable baseline; it must stay green.
