@@ -462,6 +462,30 @@ def test_inoculum_carryover_applies_to_rust():
     assert 0.07 <= with_inoculum.risk_level - baseline.risk_level <= 0.11
 
 
+def test_fusarium_risk_model_triggers_in_warm_wet_root_stress():
+    weather = {"rain": 5, "humidity": 82, "temp_max": 30, "temp_min": 22}
+
+    risk = _disease_risk_for(
+        "fusarium",
+        datetime(2026, 4, 13),
+        weather,
+        phase=GrowthPhase.MID_SEASON,
+    )
+
+    assert risk.disease == "fusarium"
+    assert risk.is_significant
+    assert "тепла волога" in risk.description
+    assert "сівозміну" in risk.recommendation
+
+
+def test_fusarium_uses_soil_biocontrol_protection_profile():
+    recommendation = recommend_protection("fusarium", 0.75)
+
+    assert recommendation.profile.id == "fusarium_soil_biocontrol"
+    assert "fusarium" in recommendation.profile.target_diseases
+    assert recommendation.profile.pre_harvest_interval_days == 0
+
+
 def test_inoculum_pressure_decay_curve():
     engine = SmartGardenerEngine()
     plant = _disease_test_plant()

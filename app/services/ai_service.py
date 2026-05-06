@@ -165,6 +165,7 @@ def _parse_vision_response(vision_data: dict, known_diseases: list) -> list:
     disease_keywords = {
         "late_blight": ["blight", "phytophthora", "rot", "brown spot"],
         "powdery_mildew": ["mildew", "white powder", "fungus"],
+        "fusarium": ["fusarium", "wilt", "vascular wilt", "root rot"],
         "aphids": ["aphid", "louse", "insect", "pest"],
         "yellow_leaf": ["yellow", "chlorosis", "yellowing"],
         "rust": ["rust", "orange", "pustule"],
@@ -212,6 +213,12 @@ def _get_recommendations(disease_id: str) -> list[str]:
             "Обробіть розчином соди (5г/1л) або фунгіцидом Топаз",
             "Покращіть вентиляцію між рослинами",
             "Уникайте надлишкового азотного підживлення",
+        ],
+        "fusarium": [
+            "Видаліть сильно уражені рослини разом із кореневою грудкою",
+            "Не компостуйте хворі рештки — фузаріоз зберігається у ґрунті",
+            "Покращіть дренаж і не перезволожуйте грядку",
+            "Заплануйте сівозміну 3-4 роки та біопрепарати для ґрунту",
         ],
         "aphids": [
             "Обробіть мильним розчином або інсектицидом",

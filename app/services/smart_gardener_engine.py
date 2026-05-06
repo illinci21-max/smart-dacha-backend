@@ -429,6 +429,7 @@ _DISEASE_NAMES = {
     "botrytis": "Сіра гниль",
     "alternaria": "Альтернаріоз",
     "rust": "Іржа",
+    "fusarium": "Фузаріоз",
 }
 
 _DISEASE_RISK_MODELS = (
@@ -519,6 +520,19 @@ _DISEASE_RISK_MODELS = (
         default_susceptibility=0.18,
         weather_label="помірно прохолодні вологі ночі з росою",
         recommendation="Рекомендація: огляньте нижній бік листя, покращіть провітрювання і не повторюйте одну FRAC-групу поспіль.",
+    ),
+    DiseaseRiskModel(
+        disease="fusarium",
+        temp_min=20,
+        temp_max=32,
+        humidity_min=65,
+        rain_min_mm=0.1,
+        incubation_period_days=7,
+        infection_pressure_carryover=0.18,
+        phase_boost=(GrowthPhase.DEVELOPMENT, GrowthPhase.MID_SEASON),
+        default_susceptibility=0.24,
+        weather_label="тепла волога погода, перезволожений ґрунт і стрес коренів",
+        recommendation="Рекомендація: перевірте дренаж, не перезволожуйте, видаляйте сильно уражені рослини, не компостуйте хворі рештки. Для профілактики використовуйте сівозміну та біопрепарати для ґрунту.",
     ),
 )
 
@@ -708,6 +722,7 @@ def crop_profile_from_backend(name: str, category: str | None, data: dict | None
             "botrytis": _to_float(data.get("sus_botrytis"), 0.2),
             "alternaria": _to_float(data.get("sus_alternaria"), 0.0),
             "rust": _to_float(data.get("sus_rust"), 0.0),
+            "fusarium": _to_float(data.get("sus_fusarium"), 0.24),
         },
         days_to_harvest_min=_to_int(data.get("days_to_harvest_min"), 60),
         days_to_harvest_max=_to_int(data.get("days_to_harvest_max"), 90),

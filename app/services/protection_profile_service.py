@@ -192,7 +192,7 @@ PROTECTION_PROFILES: dict[str, ProtectionProfile] = {
         id="bacillus_biocontrol",
         label="\u0411\u0456\u043e\u043a\u043e\u043d\u0442\u0440\u043e\u043b\u044c Bacillus",
         protection_type="\u0431\u0456\u043e\u043b\u043e\u0433\u0456\u0447\u043d\u0438\u0439 \u0437\u0430\u0445\u0438\u0441\u0442",
-        target_diseases=["powdery_mildew", "botrytis", "alternaria", "observed_symptoms"],
+        target_diseases=["powdery_mildew", "botrytis", "alternaria", "fusarium", "observed_symptoms"],
         frac_group="BM02",
         mode_of_action="\u043a\u043e\u043d\u043a\u0443\u0440\u0435\u043d\u0446\u0456\u044f \u0442\u0430 \u0430\u043d\u0442\u0430\u0433\u043e\u043d\u0456\u0437\u043c",
         reentry_days=0,
@@ -204,6 +204,25 @@ PROTECTION_PROFILES: dict[str, ProtectionProfile] = {
         curative=False,
         max_temp_c=30,
         notes=["\u0414\u043e\u0440\u0435\u0447\u043d\u0438\u0439 \u0434\u043b\u044f \u043c'\u044f\u043a\u043e\u0457 \u043f\u0440\u043e\u0444\u0456\u043b\u0430\u043a\u0442\u0438\u043a\u0438 \u0442\u0430 \u0456\u043d\u0442\u0435\u0433\u0440\u043e\u0432\u0430\u043d\u043e\u0433\u043e \u0437\u0430\u0445\u0438\u0441\u0442\u0443"],
+    ),
+    "fusarium_soil_biocontrol": ProtectionProfile(
+        id="fusarium_soil_biocontrol",
+        label="Біозахист ґрунту від фузаріозу",
+        protection_type="біологічний ґрунтовий захист",
+        target_diseases=["fusarium"],
+        frac_group="BM",
+        mode_of_action="антагонізм у ризосфері, пригнічення ґрунтового інокулюму",
+        reentry_days=0,
+        pre_harvest_interval_days=0,
+        rainfast_hours=0,
+        max_applications_per_season=6,
+        min_interval_days=10,
+        preventive=True,
+        curative=False,
+        notes=[
+            "Фузаріоз часто судинний/ґрунтовий: листкове обприскування не лікує уражену рослину",
+            "Працює як профілактика: сівозміна, дренаж, видалення уражених решток, біопрепарати у ґрунт",
+        ],
     ),
     "botrytis_contact": ProtectionProfile(
         id="botrytis_contact",
@@ -272,6 +291,8 @@ def recommend_protection(disease: str, risk_level: float) -> ProtectionRecommend
         profile_id = "azoxystrobin_qoi" if risk_level >= 0.65 else "mancozeb_contact"
     elif disease == "rust":
         profile_id = "propiconazole_dmi" if risk_level >= 0.6 else "sulfur_contact"
+    elif disease == "fusarium":
+        profile_id = "fusarium_soil_biocontrol"
     elif disease == "observed_symptoms":
         profile_id = "bacillus_biocontrol" if risk_level < 0.65 else "contact_copper"
     else:
