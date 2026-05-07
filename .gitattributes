@@ -1,0 +1,6 @@
+.gitattributes text eol=lf
+backup/Dockerfile text eol=lf
+backup/*.sh text eol=lf
+backup/crontab text eol=lf
+backup/.dockerignore text eol=lf
+backup/rclone.conf.example text eol=lf

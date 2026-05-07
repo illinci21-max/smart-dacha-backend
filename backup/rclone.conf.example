@@ -1,0 +1,25 @@
+# Backblaze B2 - production backup target
+# Copy this file to secrets/rclone.conf on VPS, fill in real credentials,
+# DO NOT commit secrets/ to git.
+
+[b2]
+type = b2
+account = REPLACE_WITH_B2_KEY_ID
+key = REPLACE_WITH_B2_APPLICATION_KEY
+hard_delete = true
+
+# Alternative providers (uncomment if migrating):
+#
+# [aws]
+# type = s3
+# provider = AWS
+# access_key_id = ...
+# secret_access_key = ...
+# region = eu-central-1
+#
+# [do]
+# type = s3
+# provider = DigitalOcean
+# access_key_id = ...
+# secret_access_key = ...
+# endpoint = fra1.digitaloceanspaces.com

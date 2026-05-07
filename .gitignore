@@ -71,3 +71,4 @@ celerybeat.pid
 
 # === OS ===
 desktop.ini
+!backup/rclone.conf.example

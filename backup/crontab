@@ -1,0 +1,5 @@
+# Smart Dacha automated backups
+# Format: minute hour day month dayofweek command
+# Times in Europe/Kyiv timezone (set via TZ env var in Dockerfile)
+# Daily at 03:15 Kyiv time (low traffic, before SAT batch which runs at 04:00)
+15 3 * * * /usr/local/bin/backup.sh
