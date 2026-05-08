@@ -38,20 +38,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install ruff bandit pip-audit
 
-      - name: Ruff (linter)
-        run: ruff check app/ tests/ --output-format=github
-        continue-on-error: true
+      - name: Ruff (linter, informational)
+        run: ruff check app/ tests/ --output-format=concise || true
 
       - name: Ruff (format check, informational)
-        run: ruff format --check app/ tests/
-        continue-on-error: true
+        run: ruff format --check app/ tests/ || true
 
       - name: Bandit (security audit, informational)
         run: bandit -r app/ -ll --exit-zero -f txt
 
       - name: pip-audit (dependency CVE scan, informational)
-        run: pip-audit -r requirements.txt --strict
-        continue-on-error: true
+        run: pip-audit -r requirements.txt --strict || true
 
   tests:
     name: Pytest (PostgreSQL + Redis)
@@ -103,7 +100,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
 
       - name: Run database migrations
         run: alembic upgrade head

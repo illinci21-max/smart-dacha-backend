@@ -1,10 +1,14 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 from sqlalchemy import String, Numeric, SmallInteger, DateTime, Boolean, ForeignKey, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.plant import Plant
 
 
 class CropCatalog(Base):

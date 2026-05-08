@@ -2,11 +2,18 @@
 import uuid
 from datetime import datetime, date
 from decimal import Decimal
+from typing import TYPE_CHECKING
 from sqlalchemy import String, Numeric, DateTime, Date, Boolean, ForeignKey, Integer, SmallInteger, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
 from app.services.lifecycle_types import LifecycleType
+
+if TYPE_CHECKING:
+    from app.models.care_journal import CareJournal
+    from app.models.crop import CropCatalog
+    from app.models.plot import Plot
+    from app.models.watering import WateringRecommendation
 
 
 class Plant(Base):
