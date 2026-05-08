@@ -1,0 +1,137 @@
+name: Deploy to VPS
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to deploy (e.g. v1.0.0 or 'latest')"
+        required: true
+        default: "latest"
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        default: staging
+        options:
+          - staging
+          - production
+      skip_backup:
+        description: "Skip pre-deploy backup (DANGEROUS - emergency only)"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.tag }} to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate VPS_HOST is configured
+        run: |
+          if [ -z "${{ secrets.VPS_HOST }}" ] || [ "${{ secrets.VPS_HOST }}" = "TBD" ]; then
+            echo "::error::VPS_HOST secret is not set or is placeholder. Cannot deploy."
+            echo "Configure it: Settings -> Secrets -> Actions -> VPS_HOST"
+            exit 1
+          fi
+
+      - name: Set up SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Add VPS to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p ${{ secrets.VPS_PORT }} -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>&1
+
+      - name: Pre-deploy backup
+        if: ${{ !inputs.skip_backup }}
+        run: |
+          ssh -p ${{ secrets.VPS_PORT }} ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "cd /opt/smart-dacha-backend && \
+             docker compose --profile production exec -T backup /usr/local/bin/backup.sh" \
+            || echo "::warning::Pre-deploy backup failed. Continuing - manual rollback may be needed."
+
+      - name: Pull new images
+        run: |
+          ssh -p ${{ secrets.VPS_PORT }} ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << EOF
+          cd /opt/smart-dacha-backend
+          export RELEASE_TAG=${{ inputs.tag }}
+          echo "RELEASE_TAG=${{ inputs.tag }}" > .release
+          docker compose pull api celery_worker celery_beat
+          docker compose --profile production pull backup
+          EOF
+
+      - name: Run database migrations
+        run: |
+          ssh -p ${{ secrets.VPS_PORT }} ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "cd /opt/smart-dacha-backend && \
+             docker compose run --rm api alembic upgrade head"
+
+      - name: Rolling restart
+        run: |
+          ssh -p ${{ secrets.VPS_PORT }} ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << EOF
+          cd /opt/smart-dacha-backend
+          docker compose up -d --no-deps --force-recreate api
+          docker compose up -d --no-deps celery_worker celery_beat
+          docker compose --profile production up -d --no-deps backup
+          EOF
+
+      - name: Wait for healthy
+        run: |
+          for i in $(seq 1 30); do
+            STATUS=$(curl -fsS -m 5 https://${{ secrets.API_DOMAIN }}/health 2>/dev/null | jq -r '.status' 2>/dev/null || echo "fail")
+            if [ "$STATUS" = "ok" ]; then
+              echo "Service healthy after $((i * 5)) seconds"
+              exit 0
+            fi
+            echo "Waiting for health... attempt $i/30"
+            sleep 5
+          done
+          echo "::error::Health check failed after 150 seconds"
+          exit 1
+
+      - name: Smoke tests
+        run: |
+          curl -fsS -m 5 https://${{ secrets.API_DOMAIN }}/health | jq .
+          DEPLOYED_VERSION=$(curl -fsS https://${{ secrets.API_DOMAIN }}/health | jq -r .version)
+          echo "Deployed version: $DEPLOYED_VERSION"
+          if [ "${{ inputs.tag }}" != "latest" ] && [ "$DEPLOYED_VERSION" != "${{ inputs.tag }}" ]; then
+            echo "::warning::Deployed version $DEPLOYED_VERSION does not match expected ${{ inputs.tag }}"
+          fi
+
+      - name: Cleanup old Docker images on VPS
+        run: |
+          ssh -p ${{ secrets.VPS_PORT }} ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "docker image prune -af --filter 'until=72h' 2>&1 | tail -5"
+        continue-on-error: true
+
+      - name: Notify Slack (success)
+        if: success()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            curl -X POST -H 'Content-Type: application/json' \
+              --data "{\"text\":\"Deploy ${{ inputs.tag }} to ${{ inputs.environment }} succeeded\"}" \
+              "$SLACK_WEBHOOK_URL"
+          fi
+
+      - name: Notify Slack (failure)
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            curl -X POST -H 'Content-Type: application/json' \
+              --data "{\"text\":\"Deploy ${{ inputs.tag }} to ${{ inputs.environment }} FAILED - check Actions logs\"}" \
+              "$SLACK_WEBHOOK_URL"
+          fi

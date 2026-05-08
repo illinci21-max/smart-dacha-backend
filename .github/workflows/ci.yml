@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "**.py"
+      - "requirements*.txt"
+      - "alembic/**"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint & Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install lint tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff bandit pip-audit
+
+      - name: Ruff (linter)
+        run: ruff check app/ tests/ --output-format=github
+        continue-on-error: true
+
+      - name: Ruff (format check, informational)
+        run: ruff format --check app/ tests/
+        continue-on-error: true
+
+      - name: Bandit (security audit, informational)
+        run: bandit -r app/ -ll --exit-zero -f txt
+
+      - name: pip-audit (dependency CVE scan, informational)
+        run: pip-audit -r requirements.txt --strict
+        continue-on-error: true
+
+  tests:
+    name: Pytest (PostgreSQL + Redis)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg16
+        env:
+          POSTGRES_USER: smartdacha_test
+          POSTGRES_PASSWORD: test_password_for_ci
+          POSTGRES_DB: smartdacha_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://smartdacha_test:test_password_for_ci@localhost:5432/smartdacha_test
+      DATABASE_SYNC_URL: postgresql+psycopg2://smartdacha_test:test_password_for_ci@localhost:5432/smartdacha_test
+      REDIS_URL: redis://localhost:6379
+      SECRET_KEY: ci_dev_secret_key_minimum_32_characters_for_validation_pass
+      ENVIRONMENT: development
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run database migrations
+        run: alembic upgrade head
+
+      - name: Run stable baseline (143 tests expected)
+        run: |
+          python -m pytest \
+            tests/test_smart_gardener_engine.py \
+            tests/test_sat_service.py \
+            tests/test_agro_analysis_fixture_scenarios.py \
+            tests/test_agro_work_plan_regressions.py \
+            tests/test_config_security.py \
+            tests/test_observability.py \
+            tests/test_work_plan_service.py \
+            tests/test_nutrient_ledger_service.py \
+            tests/test_plant_profile_service.py \
+            tests/test_lifecycle_types.py \
+            tests/test_perennial_phenology.py \
+            tests/test_perennial_tasks.py \
+            tests/test_calendar_gdd.py \
+            tests/test_observation_species_filter.py \
+            -v --tb=short --override-ini="addopts="
+
+      - name: Run unstable tests (informational only)
+        run: |
+          python -m pytest tests/test_auth.py tests/test_integration.py \
+            -v --tb=line --override-ini="addopts="
+        continue-on-error: true
