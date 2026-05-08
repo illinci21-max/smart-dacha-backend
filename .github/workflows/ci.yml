@@ -24,10 +24,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -88,10 +88,10 @@ jobs:
       ENVIRONMENT: development
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -104,10 +104,6 @@ jobs:
 
       - name: Run database migrations
         run: alembic upgrade head
-
-      - name: Check migrations match models (drift detection, informational)
-        run: |
-          alembic check || echo "::warning::Alembic detected pre-existing model/migration drift; track cleanup separately."
 
       - name: Run stable baseline (143 tests expected)
         run: |
@@ -140,13 +136,13 @@ jobs:
     timeout-minutes: 10
     needs: tests
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build API image (verify Dockerfile)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
@@ -157,7 +153,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=api
 
       - name: Build Backup image (verify backup Dockerfile)
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: ./backup
           file: ./backup/Dockerfile
