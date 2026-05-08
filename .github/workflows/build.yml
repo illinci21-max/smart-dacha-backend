@@ -35,7 +35,7 @@ jobs:
 
       - name: Extract API image metadata
         id: meta_api
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository_owner }}/smart-dacha-backend
           tags: |
@@ -59,7 +59,7 @@ jobs:
 
       - name: Extract Backup image metadata
         id: meta_backup
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository_owner }}/smart-dacha-backup
           tags: |
