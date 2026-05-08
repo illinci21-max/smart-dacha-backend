@@ -6,7 +6,7 @@
 # ── Web Framework ─────────────────────────────────────────────────
 fastapi==0.115.0
 uvicorn[standard]==0.32.0
-gunicorn==21.2.0          # Production WSGI server
+gunicorn==26.0.0          # Production WSGI server
 python-multipart==0.0.12  # File uploads
 itsdangerous==2.2.0       # Signed cookie sessions for internal admin
 
