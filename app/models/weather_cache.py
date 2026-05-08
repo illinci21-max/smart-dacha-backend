@@ -1,12 +1,16 @@
 # FIX: Єдина версія WeatherDailyCache (видалено дублікат з weather.py)
 # FIX: Додано ForeignKey на weather_zones (був відсутній у цьому файлі)
 import uuid
+from typing import TYPE_CHECKING
 from datetime import datetime, date
 from decimal import Decimal
 from sqlalchemy import String, Numeric, DateTime, Date, Boolean, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.weather_zone import WeatherZone
 
 
 class WeatherDailyCache(Base):
@@ -23,7 +27,7 @@ class WeatherDailyCache(Base):
         UUID(as_uuid=True), ForeignKey("weather_zones.id", ondelete="CASCADE"),
         nullable=False, index=True
     )
-    date: Mapped[date] = mapped_column(Date, nullable=False)
+    date: Mapped[date] = mapped_column(Date, primary_key=True, nullable=False)
 
     temp_max: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
     temp_min: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))

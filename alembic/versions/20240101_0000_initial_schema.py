@@ -52,7 +52,7 @@ def upgrade() -> None:
     # weather_daily_cache (TimescaleDB hypertable)
     op.create_table(
         "weather_daily_cache",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("zone_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("date", sa.Date(), nullable=False),
         sa.Column("temp_max", sa.Numeric(5, 2)),
@@ -65,6 +65,7 @@ def upgrade() -> None:
         sa.Column("is_forecast", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column("source_api", sa.String(50), server_default="open_meteo"),
         sa.Column("fetched_at", sa.DateTime(timezone=True), server_default=sa.text("NOW()")),
+        sa.PrimaryKeyConstraint("id", "date", name="pk_weather_daily_cache"),
         sa.UniqueConstraint("zone_id", "date", name="uq_weather_cache_zone_date"),
     )
     # Перетворюємо на TimescaleDB hypertable
