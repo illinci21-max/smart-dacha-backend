@@ -1,7 +1,7 @@
 """Forum schemas for API."""
 from __future__ import annotations
 from datetime import datetime
-from pydantic import BaseModel, UUID4, Field
+from pydantic import BaseModel, UUID4, Field, ConfigDict
 
 class ForumTopicCreate(BaseModel):
     title: str = Field(..., min_length=3, max_length=200)
@@ -15,16 +15,14 @@ class ForumAuthor(BaseModel):
     id: UUID4
     full_name: str | None = None
     email: str
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ForumReplyResponse(BaseModel):
     id: UUID4
     body: str
     author: ForumAuthor
     created_at: datetime
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ForumTopicListItem(BaseModel):
     id: UUID4
@@ -36,8 +34,7 @@ class ForumTopicListItem(BaseModel):
     replies_count: int = 0
     is_pinned: bool = False
     created_at: datetime
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ForumTopicDetail(BaseModel):
     id: UUID4
@@ -50,5 +47,4 @@ class ForumTopicDetail(BaseModel):
     is_pinned: bool = False
     created_at: datetime
     replies: list[ForumReplyResponse] = []
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
