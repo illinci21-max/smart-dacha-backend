@@ -39,15 +39,25 @@ BACKUP_LOCAL_RETENTION_DAYS=7
 BACKUP_REMOTE_RETENTION_DAYS=90
 ```
 
-Start only the backup service:
+Start with production overlay:
 
 ```bash
-docker compose --profile production up -d backup
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  --profile production up -d backup
 ```
 
-The backup service is behind the `production` profile, so regular development `docker compose up` does not start it.
+To make this command default for the production VPS, set it in the shell:
+
+```bash
+export COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
+```
+
+Then `docker compose --profile production up -d backup` works as before.
+Regular development `docker compose up` does not load the backup service.
 
 ## Verify It Works
+
+Note: all commands below assume `COMPOSE_FILE` includes both files, or use explicit `-f` flags such as `docker compose -f docker-compose.yml -f docker-compose.prod.yml exec backup ...`.
 
 Run a manual backup:
 

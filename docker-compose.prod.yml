@@ -1,0 +1,45 @@
+# Production-only overlay for docker-compose.yml.
+#
+# Usage:
+#   Dev:  docker compose up -d
+#   Prod: docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#                        --profile production up -d
+#
+# All ${VAR:?required} fail-fast checks run only when this overlay is loaded,
+# so dev workflows are not affected.
+
+services:
+  backup:
+    build:
+      context: ./backup
+      dockerfile: Dockerfile
+    container_name: smartdacha_backup
+    image: ghcr.io/illinci21-max/smart-dacha-backup:${RELEASE_TAG:-latest}
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: smartdacha
+      POSTGRES_USER: smartdacha
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      RCLONE_REMOTE: ${BACKUP_RCLONE_REMOTE:-b2}
+      RCLONE_BUCKET: ${BACKUP_BUCKET:?BACKUP_BUCKET is required for backup service}
+      HEALTHCHECK_URL: ${BACKUP_HEALTHCHECK_URL:-}
+      LOCAL_RETENTION_DAYS: ${BACKUP_LOCAL_RETENTION_DAYS:-7}
+      REMOTE_RETENTION_DAYS: ${BACKUP_REMOTE_RETENTION_DAYS:-90}
+      TZ: Europe/Kyiv
+    volumes:
+      - backup_data:/backups
+      - ./secrets/rclone.conf:/etc/rclone/rclone.conf:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - db_net
+    restart: unless-stopped
+    profiles:
+      - production
+
+
+volumes:
+  backup_data:
+    driver: local

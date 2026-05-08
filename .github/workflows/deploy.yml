@@ -57,7 +57,8 @@ jobs:
         run: |
           ssh -p ${{ secrets.VPS_PORT }} ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
             "cd /opt/smart-dacha-backend && \
-             docker compose --profile production exec -T backup /usr/local/bin/backup.sh" \
+             docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+               --profile production exec -T backup /usr/local/bin/backup.sh" \
             || echo "::warning::Pre-deploy backup failed. Continuing - manual rollback may be needed."
 
       - name: Pull new images
@@ -67,7 +68,8 @@ jobs:
           export RELEASE_TAG=${{ inputs.tag }}
           echo "RELEASE_TAG=${{ inputs.tag }}" > .release
           docker compose pull api celery_worker celery_beat
-          docker compose --profile production pull backup
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+                         --profile production pull backup
           EOF
 
       - name: Run database migrations
@@ -82,7 +84,8 @@ jobs:
           cd /opt/smart-dacha-backend
           docker compose up -d --no-deps --force-recreate api
           docker compose up -d --no-deps celery_worker celery_beat
-          docker compose --profile production up -d --no-deps backup
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+                         --profile production up -d --no-deps backup
           EOF
 
       - name: Wait for healthy

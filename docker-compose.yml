@@ -138,35 +138,6 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  backup:
-    build:
-      context: ./backup
-      dockerfile: Dockerfile
-    container_name: smartdacha_backup
-    environment:
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: smartdacha
-      POSTGRES_USER: smartdacha
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      RCLONE_REMOTE: ${BACKUP_RCLONE_REMOTE:-b2}
-      RCLONE_BUCKET: ${BACKUP_BUCKET:?BACKUP_BUCKET is required for backup service}
-      HEALTHCHECK_URL: ${BACKUP_HEALTHCHECK_URL:-}
-      LOCAL_RETENTION_DAYS: ${BACKUP_LOCAL_RETENTION_DAYS:-7}
-      REMOTE_RETENTION_DAYS: ${BACKUP_REMOTE_RETENTION_DAYS:-90}
-      TZ: Europe/Kyiv
-    volumes:
-      - backup_data:/backups
-      - ./secrets/rclone.conf:/etc/rclone/rclone.conf:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - db_net
-    restart: unless-stopped
-    profiles:
-      - production
-
   redis:
     image: redis:7-alpine
     container_name: smartdacha_redis
@@ -188,6 +159,4 @@ services:
 
 volumes:
   pgdata:
-  backup_data:
-    driver: local
   redisdata:
