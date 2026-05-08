@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
-from sqlalchemy import String, DateTime, Boolean, ForeignKey, Text, func
+from sqlalchemy import String, DateTime, Boolean, ForeignKey, Text, func, Index, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from app.database import Base
@@ -15,6 +15,10 @@ if TYPE_CHECKING:
 
 class CareJournal(Base):
     __tablename__ = "care_journal"
+    __table_args__ = (
+        Index("ix_care_journal_plant_deleted_performed", "plant_id", "is_deleted", text("performed_at DESC")),
+        Index("ix_care_journal_user_updated", "user_id", "updated_at"),
+    )
 
     # UUID генерується на клієнті — ключ для офлайн-синхронізації
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)

@@ -2,14 +2,25 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy import String, Numeric, DateTime, Boolean, ForeignKey, Text, func
+from typing import TYPE_CHECKING
+from sqlalchemy import String, Numeric, DateTime, Boolean, ForeignKey, Text, func, Index, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from app.database import Base
 
+if TYPE_CHECKING:
+    from app.models.garden_action import GardenAction
+    from app.models.garden_observation import GardenObservation
+    from app.models.plant import Plant
+    from app.models.user import User
+    from app.models.weather_zone import WeatherZone
+
 
 class Plot(Base):
     __tablename__ = "plots"
+    __table_args__ = (
+        Index("ix_plots_user_deleted_created", "user_id", "is_deleted", text("created_at DESC")),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4

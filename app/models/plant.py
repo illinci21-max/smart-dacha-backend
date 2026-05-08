@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, date
 from decimal import Decimal
 from typing import TYPE_CHECKING
-from sqlalchemy import String, Numeric, DateTime, Date, Boolean, ForeignKey, Integer, SmallInteger, func
+from sqlalchemy import String, Numeric, DateTime, Date, Boolean, ForeignKey, Integer, SmallInteger, func, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
@@ -18,6 +18,10 @@ if TYPE_CHECKING:
 
 class Plant(Base):
     __tablename__ = "plants"
+    __table_args__ = (
+        Index("ix_plants_plot_deleted", "plot_id", "is_deleted"),
+        Index("ix_plants_user_deleted", "user_id", "is_deleted"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4

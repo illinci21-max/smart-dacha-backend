@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
-    String, Numeric, DateTime, ForeignKey, Text, func, CheckConstraint,
+    String, Numeric, DateTime, ForeignKey, Text, func, CheckConstraint, Index, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
@@ -21,6 +21,8 @@ class FinanceTransaction(Base):
     __table_args__ = (
         CheckConstraint("type IN ('income', 'expense')", name="ck_finance_type"),
         CheckConstraint("amount > 0", name="ck_finance_amount_positive"),
+        Index("ix_finance_user_date_desc", "user_id", text("date DESC")),
+        Index("ix_finance_user_type", "user_id", "type"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
