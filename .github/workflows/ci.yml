@@ -105,7 +105,7 @@ jobs:
       - name: Run database migrations
         run: alembic upgrade head
 
-      - name: Run stable baseline (143 tests expected)
+      - name: Run stable baseline (155 tests expected)
         run: |
           python -m pytest \
             tests/test_smart_gardener_engine.py \
@@ -122,6 +122,7 @@ jobs:
             tests/test_perennial_tasks.py \
             tests/test_calendar_gdd.py \
             tests/test_observation_species_filter.py \
+            tests/test_upload_validation.py \
             -v --tb=short --override-ini="addopts="
 
       - name: Run unstable tests (informational only)
