@@ -67,25 +67,27 @@ jobs:
           cd /opt/smart-dacha-backend
           export RELEASE_TAG=${{ inputs.tag }}
           echo "RELEASE_TAG=${{ inputs.tag }}" > .release
-          docker compose pull api celery_worker celery_beat
           docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-                         --profile production pull backup
+                         --profile production pull api celery_worker celery_beat backup
           EOF
 
       - name: Run database migrations
         run: |
           ssh -p ${{ secrets.VPS_PORT }} ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
             "cd /opt/smart-dacha-backend && \
-             docker compose run --rm api alembic upgrade head"
+             export RELEASE_TAG=${{ inputs.tag }} && \
+             docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+               --profile production run --rm api alembic upgrade head"
 
       - name: Rolling restart
         run: |
           ssh -p ${{ secrets.VPS_PORT }} ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << EOF
           cd /opt/smart-dacha-backend
-          docker compose up -d --no-deps --force-recreate api
-          docker compose up -d --no-deps celery_worker celery_beat
+          export RELEASE_TAG=${{ inputs.tag }}
           docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-                         --profile production up -d --no-deps backup
+                         --profile production up -d --no-deps --force-recreate api
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+                         --profile production up -d --no-deps celery_worker celery_beat backup
           EOF
 
       - name: Wait for healthy

@@ -61,8 +61,9 @@ In Settings -> Secrets and variables -> Actions:
    - Tag: `v1.0.0`
    - Environment: `staging`
    - Skip backup: unchecked
-7. Verify staging deploy.
-8. Re-run with environment: `production`.
+7. `deploy.yml` pulls GHCR images through `docker-compose.prod.yml`.
+8. Verify staging deploy.
+9. Re-run with environment: `production`.
 
 ## Rollback
 

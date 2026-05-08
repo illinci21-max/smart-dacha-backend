@@ -9,6 +9,15 @@
 # so dev workflows are not affected.
 
 services:
+  api:
+    image: ghcr.io/illinci21-max/smart-dacha-backend:${RELEASE_TAG:-latest}
+
+  celery_worker:
+    image: ghcr.io/illinci21-max/smart-dacha-backend:${RELEASE_TAG:-latest}
+
+  celery_beat:
+    image: ghcr.io/illinci21-max/smart-dacha-backend:${RELEASE_TAG:-latest}
+
   backup:
     build:
       context: ./backup

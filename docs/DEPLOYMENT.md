@@ -226,20 +226,17 @@ Before the first real deploy:
 
 - GitHub Actions `ci.yml` is green on `main`.
 - GitHub Actions `build.yml` has pushed `dev-test` or a release tag to GHCR.
-- VPS can `docker pull` both API and backup images from GHCR.
+- VPS can `docker pull` API and backup images from GHCR.
 - `.env` exists on VPS and is `chmod 600`.
 - `secrets/rclone.conf` exists and is `chmod 600`.
 - DNS for `API_DOMAIN` points to the VPS.
 - TLS/reverse proxy is configured for `https://<API_DOMAIN>`.
 - `POSTGRES_PASSWORD`, `SECRET_KEY`, B2 credentials, and Healthchecks URL are stored in the password manager.
 
-Important current codebase note:
+Production image references live in `docker-compose.prod.yml`:
 
-`deploy.yml` pulls GHCR images for `api`, `celery_worker`, and `celery_beat`.
-Before the first VPS deploy, verify production Compose services include the
-expected GHCR `image:` references for these services, or add a production
-overlay for API/Celery images. The backup service already has an image reference
-in `docker-compose.prod.yml`.
+- `api`, `celery_worker`, `celery_beat` use `ghcr.io/illinci21-max/smart-dacha-backend:${RELEASE_TAG:-latest}`
+- `backup` uses `ghcr.io/illinci21-max/smart-dacha-backup:${RELEASE_TAG:-latest}`
 
 ## First Manual Compose Start
 
@@ -254,6 +251,9 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml \
   --profile production config
 
 docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  --profile production pull api celery_worker celery_beat backup
+
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
   --profile production up -d postgres redis
 
 docker compose ps
@@ -262,7 +262,8 @@ docker compose ps
 Run migrations:
 
 ```bash
-docker compose run --rm api alembic upgrade head
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  --profile production run --rm api alembic upgrade head
 ```
 
 Start app services:
@@ -384,7 +385,8 @@ export RELEASE_TAG=<previous-good-tag>
 docker compose -f docker-compose.yml -f docker-compose.prod.yml \
   --profile production pull api celery_worker celery_beat backup
 
-docker compose run --rm api alembic upgrade head
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  --profile production run --rm api alembic upgrade head
 
 docker compose -f docker-compose.yml -f docker-compose.prod.yml \
   --profile production up -d --no-deps --force-recreate api celery_worker celery_beat backup
