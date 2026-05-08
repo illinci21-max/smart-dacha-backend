@@ -16,13 +16,13 @@ from app.models.plant import Plant
 from app.models.crop import CropCatalog
 from app.schemas.diagnosis import DiagnosisResponse, DiagnosisFeedbackRequest
 from app.services.ai_service import diagnose_plant_photo
+from app.services.upload_validation import validate_image_upload
 from app.config import settings
 
 router = APIRouter(prefix="/diagnose", tags=["diagnostics"])
 
 # FIX: максимальний розмір файлу 10 МБ
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
-ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
 
 async def _check_diagnosis_limit(user: User, db: AsyncSession):
@@ -62,19 +62,12 @@ async def create_diagnosis(
     await _check_diagnosis_limit(current_user, db)
 
     # FIX: Валідація типу файлу
-    if file.content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(
-            status_code=415,
-            detail=f"Підтримуються тільки: {', '.join(ALLOWED_CONTENT_TYPES)}"
-        )
-
-    # FIX: Обмеження розміру файлу
     content = await file.read()
-    if len(content) > MAX_FILE_SIZE_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Файл занадто великий. Максимум: {MAX_FILE_SIZE_BYTES // 1024 // 1024} МБ"
-        )
+    validated_upload = validate_image_upload(
+        content,
+        file.content_type,
+        max_size_bytes=MAX_FILE_SIZE_BYTES,
+    )
 
     # FIX: Перевірка доступу до рослини перед завантаженням в S3
     crop_diseases = []
@@ -92,10 +85,7 @@ async def create_diagnosis(
     import boto3
     from botocore.exceptions import ClientError
 
-    ext = (file.filename or "jpg").rsplit(".", 1)[-1].lower()
-    if ext not in ("jpg", "jpeg", "png", "webp"):
-        ext = "jpg"
-    photo_key = f"diagnoses/{current_user.id}/{uuid4()}.{ext}"
+    photo_key = f"diagnoses/{current_user.id}/{uuid4()}.{validated_upload.extension}"
 
     try:
         s3 = boto3.client(
@@ -109,7 +99,7 @@ async def create_diagnosis(
             Bucket=settings.S3_BUCKET,
             Key=photo_key,
             Body=content,
-            ContentType=file.content_type or "image/jpeg",
+            ContentType=validated_upload.content_type,
         )
     except ClientError as e:
         raise HTTPException(status_code=503, detail=f"Помилка завантаження файлу: {e}")

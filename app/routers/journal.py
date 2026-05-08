@@ -15,11 +15,11 @@ from app.models.plant import Plant
 from app.models.care_journal import CareJournal
 from app.schemas.journal import JournalEntryCreate, JournalEntryUpdate, JournalEntryResponse
 from app.config import settings
+from app.services.upload_validation import validate_image_upload
 
 router = APIRouter(tags=["journal"])
 
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024
-ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
 
 @router.get("/plants/{plant_id}/journal", response_model=list[JournalEntryResponse])
@@ -153,9 +153,6 @@ async def upload_photo(
     entry = await _get_entry_or_404(entry_id, current_user.id, db)
 
     # FIX: Валідація типу файлу
-    if file.content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(status_code=415, detail="Підтримуються тільки JPEG, PNG, WebP")
-
     max_photos = settings.FREE_PHOTOS_PER_ENTRY if current_user.subscription_tier == "free" else 100
     if len(entry.photos) >= max_photos:
         raise HTTPException(
@@ -165,10 +162,18 @@ async def upload_photo(
 
     # FIX: Читаємо файл та перевіряємо розмір
     content = await file.read()
-    if len(content) > MAX_FILE_SIZE_BYTES:
-        raise HTTPException(status_code=413, detail="Файл занадто великий (max 10 МБ)")
+    validated_upload = validate_image_upload(
+        content,
+        file.content_type,
+        max_size_bytes=MAX_FILE_SIZE_BYTES,
+    )
 
-    photo_url = await _upload_to_s3(content, file.filename, file.content_type, str(current_user.id))
+    photo_url = await _upload_to_s3(
+        content,
+        validated_upload.content_type,
+        validated_upload.extension,
+        str(current_user.id),
+    )
 
     # FIX: JSONB mutation detection — треба перепризначити список
     photos = list(entry.photos)
@@ -183,15 +188,12 @@ async def upload_photo(
     return {"url": photo_url}
 
 
-async def _upload_to_s3(content: bytes, filename: str | None, content_type: str | None, user_id: str) -> str:
+async def _upload_to_s3(content: bytes, content_type: str, extension: str, user_id: str) -> str:
     """Завантажує файл в S3 та повертає URL."""
     import boto3
     from botocore.exceptions import ClientError
 
-    ext = (filename or "jpg").rsplit(".", 1)[-1].lower()
-    if ext not in ("jpg", "jpeg", "png", "webp"):
-        ext = "jpg"
-    key = f"journal/{user_id}/{uuid4()}.{ext}"
+    key = f"journal/{user_id}/{uuid4()}.{extension}"
 
     try:
         s3 = boto3.client(
@@ -205,7 +207,7 @@ async def _upload_to_s3(content: bytes, filename: str | None, content_type: str 
             Bucket=settings.S3_BUCKET,
             Key=key,
             Body=content,
-            ContentType=content_type or "image/jpeg",
+            ContentType=content_type,
         )
     except ClientError as e:
         raise HTTPException(status_code=503, detail=f"Помилка завантаження: {e}")

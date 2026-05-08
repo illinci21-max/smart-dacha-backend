@@ -10,21 +10,18 @@ import logging
 from uuid import uuid4
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, UploadFile, File
 import httpx
 
-from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
 from app.config import settings
+from app.services.upload_validation import validate_image_upload
 
 router = APIRouter(prefix="/diagnose-ai", tags=["ai-diagnosis"])
 logger = logging.getLogger(__name__)
 
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
 _GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 _PLANTNET_URL = "https://my-api.plantnet.org/v2/identify/all"
@@ -157,19 +154,19 @@ async def analyze_photo(
 ):
     """Upload a plant photo and get AI diagnosis + identification."""
     # Validate
-    if file.content_type not in ALLOWED_TYPES:
-        raise HTTPException(400, f"Тип файлу {file.content_type} не підтримується. Дозволено: JPEG, PNG, WebP")
-
     image_bytes = await file.read()
-    if len(image_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(400, "Файл занадто великий (макс 10 МБ)")
+    validated_upload = validate_image_upload(
+        image_bytes,
+        file.content_type,
+        max_size_bytes=MAX_FILE_SIZE,
+    )
 
     logger.info("AI diagnosis request from user %s, image %d bytes, type %s",
-                current_user.id, len(image_bytes), file.content_type)
+                current_user.id, len(image_bytes), validated_upload.content_type)
 
     # Run both APIs in parallel
     import asyncio
-    gemini_task = asyncio.create_task(_analyze_with_gemini(image_bytes, file.content_type))
+    gemini_task = asyncio.create_task(_analyze_with_gemini(image_bytes, validated_upload.content_type))
     plantnet_task = asyncio.create_task(_identify_with_plantnet(image_bytes))
 
     gemini_result = await gemini_task
