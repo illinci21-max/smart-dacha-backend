@@ -19,7 +19,7 @@ alembic==1.14.0           # DB migrations
 # ── Auth ──────────────────────────────────────────────────────────
 PyJWT[crypto]==2.10.1       # JWT encode/decode; replaces vulnerable python-jose
 passlib[bcrypt]==1.7.4
-bcrypt==4.0.1             # FIX: явна версія для сумісності з Python 3.12
+bcrypt==5.0.0             # FIX: явна версія для сумісності з Python 3.12
 
 # ── Rate Limiting (S-04 FIX) ──────────────────────────────────────
 slowapi==0.1.9            # Rate limiting для FastAPI
