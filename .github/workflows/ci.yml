@@ -108,6 +108,9 @@ jobs:
       - name: Run database migrations
         run: alembic upgrade head
 
+      - name: Check migrations match models (drift detection)
+        run: alembic check
+
       - name: Run stable baseline (143 tests expected)
         run: |
           python -m pytest \
@@ -132,3 +135,36 @@ jobs:
           python -m pytest tests/test_auth.py tests/test_integration.py \
             -v --tb=line --override-ini="addopts="
         continue-on-error: true
+
+  docker-build:
+    name: Docker Build Sanity Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build API image (verify Dockerfile)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          tags: smartdacha-backend-ci:test
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - name: Build Backup image (verify backup Dockerfile)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backup
+          file: ./backup/Dockerfile
+          push: false
+          load: true
+          tags: smartdacha-backup-ci:test
+          cache-from: type=gha,scope=backup
+          cache-to: type=gha,mode=max,scope=backup
