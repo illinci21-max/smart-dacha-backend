@@ -15,6 +15,7 @@ from app.models.ai_diagnosis import AIDiagnosis
 from app.models.plant import Plant
 from app.models.crop import CropCatalog
 from app.schemas.diagnosis import DiagnosisResponse, DiagnosisFeedbackRequest
+from app.services.ai_diagnosis_quota import check_and_consume_ai_diagnosis_quota
 from app.services.ai_service import diagnose_plant_photo
 from app.services.upload_validation import validate_image_upload
 from app.config import settings
@@ -59,7 +60,7 @@ async def create_diagnosis(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await _check_diagnosis_limit(current_user, db)
+    # Weekly Free quota is consumed after upload validation below.
 
     # FIX: Валідація типу файлу
     content = await file.read()
@@ -68,6 +69,7 @@ async def create_diagnosis(
         file.content_type,
         max_size_bytes=MAX_FILE_SIZE_BYTES,
     )
+    await check_and_consume_ai_diagnosis_quota(current_user)
 
     # FIX: Перевірка доступу до рослини перед завантаженням в S3
     crop_diseases = []

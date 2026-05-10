@@ -67,10 +67,11 @@ class Settings(BaseSettings):
     STRIPE_PREMIUM_PLUS_PRICE_ID: str = ""
 
     # ── SaaS Limits ───────────────────────────────────────────────────────────
-    FREE_PLOTS_LIMIT: int = 1
-    FREE_PLANTS_LIMIT: int = 10
-    FREE_DIAGNOSES_PER_MONTH: int = 3
-    FREE_PHOTOS_PER_ENTRY: int = 3
+    FREE_PLOTS_LIMIT: int = 999
+    FREE_PLANTS_LIMIT: int = 9999
+    FREE_DIAGNOSES_PER_WEEK: int = 3
+    FREE_DIAGNOSES_PER_MONTH: int = 12
+    FREE_PHOTOS_PER_ENTRY: int = 100
 
     # ── Weather cache ─────────────────────────────────────────────────────────
     WEATHER_CACHE_TTL_SECONDS: int = 6 * 3600

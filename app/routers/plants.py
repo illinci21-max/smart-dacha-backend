@@ -43,7 +43,7 @@ async def create_plant(
     count = await db.scalar(
         select(func.count()).where(Plant.user_id == current_user.id, Plant.is_deleted == False)
     )
-    if count >= current_user.plants_limit:
+    if current_user.plants_limit < 0 and count >= current_user.plants_limit:
         raise HTTPException(
             status_code=403,
             detail={

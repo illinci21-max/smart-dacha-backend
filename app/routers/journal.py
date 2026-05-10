@@ -153,7 +153,7 @@ async def upload_photo(
     entry = await _get_entry_or_404(entry_id, current_user.id, db)
 
     # FIX: Валідація типу файлу
-    max_photos = settings.FREE_PHOTOS_PER_ENTRY if current_user.subscription_tier == "free" else 100
+    max_photos = 100
     if len(entry.photos) >= max_photos:
         raise HTTPException(
             status_code=403,

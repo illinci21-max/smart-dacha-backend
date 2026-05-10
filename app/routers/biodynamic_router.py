@@ -572,7 +572,7 @@ async def get_biodynamic_forecast(
     Free users: only today is unlocked.
     Pro users: full forecast for `days` days.
     """
-    is_pro = current_user.subscription_tier in ("premium", "premium_plus")
+    is_pro = True
     today = date.today()
 
     forecast = []

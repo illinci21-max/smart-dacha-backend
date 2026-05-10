@@ -16,6 +16,7 @@ import httpx
 from app.dependencies import get_current_user
 from app.models.user import User
 from app.config import settings
+from app.services.ai_diagnosis_quota import check_and_consume_ai_diagnosis_quota
 from app.services.gemini_usage import record_gemini_usage
 from app.services.upload_validation import validate_image_upload
 
@@ -162,6 +163,7 @@ async def analyze_photo(
         file.content_type,
         max_size_bytes=MAX_FILE_SIZE,
     )
+    await check_and_consume_ai_diagnosis_quota(current_user)
 
     logger.info("AI diagnosis request from user %s, image %d bytes, type %s",
                 current_user.id, len(image_bytes), validated_upload.content_type)

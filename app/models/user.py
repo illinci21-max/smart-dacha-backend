@@ -25,8 +25,8 @@ class User(Base):
     subscription_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     stripe_customer_id: Mapped[str | None] = mapped_column(String(100), unique=True)
 
-    plots_limit: Mapped[int] = mapped_column(SmallInteger, default=1)
-    plants_limit: Mapped[int] = mapped_column(SmallInteger, default=10)
+    plots_limit: Mapped[int] = mapped_column(SmallInteger, default=999)
+    plants_limit: Mapped[int] = mapped_column(SmallInteger, default=9999)
 
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

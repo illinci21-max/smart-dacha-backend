@@ -14,11 +14,17 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 
 TIER_LIMITS = {
     "free": {
-        "plots_limit": 1,
-        "plants_limit": 10,
-        "diagnoses_per_month": 3,
-        "photos_per_entry": 3,
-        "features": ["crop_catalog", "care_journal_basic", "weather_current"],
+        "plots_limit": 999,
+        "plants_limit": 9999,
+        "diagnoses_per_week": 3,
+        "diagnoses_per_month": 12,
+        "photos_per_entry": 100,
+        "features": [
+            "crop_catalog", "care_journal_full", "weather_forecast_14d",
+            "sat_tracking", "smart_watering", "push_notifications",
+            "ai_diagnosis", "export_data", "custom_crops", "forum",
+            "biodynamic_calendar",
+        ],
     },
     "premium": {
         "plots_limit": 10,

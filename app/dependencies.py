@@ -127,6 +127,8 @@ def require_premium(feature: str = ""):
     §S-13: subscription_expires_at=None → FREE (no active sub).
     """
     async def _check(current_user: User = Depends(get_current_user)) -> User:
+        return current_user
+
         now = datetime.now(timezone.utc)
         is_premium = current_user.subscription_tier in ("premium", "premium_plus")
 
@@ -157,6 +159,8 @@ async def check_plots_limit(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> User:
+    return current_user
+
     count = await db.scalar(
         select(func.count(Plot.id)).where(
             Plot.user_id == current_user.id,
@@ -194,6 +198,8 @@ async def check_plants_limit(
     )
     if not plot:
         raise HTTPException(status_code=404, detail="Ділянку не знайдено")
+
+    return current_user
 
     count = await db.scalar(
         select(func.count(Plant.id)).where(

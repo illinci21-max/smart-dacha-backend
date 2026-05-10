@@ -41,8 +41,9 @@ async def get_subscription(
         "is_active": is_active,
         "expires_at": current_user.subscription_expires_at.isoformat() if current_user.subscription_expires_at else None,
         "limits": {
-            "plots": current_user.plots_limit,
-            "plants": current_user.plants_limit,
+            "plots": max(current_user.plots_limit, tier_info["plots_limit"]),
+            "plants": max(current_user.plants_limit, tier_info["plants_limit"]),
+            "diagnoses_per_week": tier_info.get("diagnoses_per_week"),
             "diagnoses_per_month": tier_info["diagnoses_per_month"],
             "photos_per_entry": tier_info["photos_per_entry"],
         },
