@@ -11,6 +11,7 @@ from __future__ import annotations
 from decimal import Decimal
 from datetime import date, datetime, timezone
 from typing import Optional
+from uuid import UUID
 import logging
 
 import httpx
@@ -47,7 +48,7 @@ def get_grid_coords(lat: float, lon: float) -> tuple[Decimal, Decimal]:
 
 # ── Weather zone (ORM version — §1.5) ────────────────────────────────────────
 
-async def get_or_create_weather_zone(lat: float, lon: float, db) -> Optional[str]:
+async def get_or_create_weather_zone(lat: float, lon: float, db) -> Optional[UUID]:
     """Find or create weather_zone using ORM. Returns zone_id as string."""
     lat_grid, lon_grid = get_grid_coords(lat, lon)
 
@@ -62,7 +63,7 @@ async def get_or_create_weather_zone(lat: float, lon: float, db) -> Optional[str
         zone = result.scalar_one_or_none()
 
         if zone:
-            return str(zone.id)
+            return zone.id
 
         # Create new zone
         new_zone = WeatherZone(
@@ -72,10 +73,11 @@ async def get_or_create_weather_zone(lat: float, lon: float, db) -> Optional[str
         )
         db.add(new_zone)
         await db.flush()
-        return str(new_zone.id)
+        return new_zone.id
 
     except Exception as e:
         logger.error("Failed to create weather zone: %s", e)
+        await db.rollback()
         return None
 
 
