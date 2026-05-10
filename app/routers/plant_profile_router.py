@@ -63,4 +63,4 @@ async def lookup_plant_profile(
     if not name:
         raise HTTPException(400, "Назва не може бути порожньою")
 
-    return await lookup_profile(name, req.category, db)
+    return await lookup_profile(name, req.category, db, user_id=current_user.id)

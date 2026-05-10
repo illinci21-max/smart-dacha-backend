@@ -593,6 +593,7 @@ async def get_garden_tasks(
             category,
             db,
             allow_gemini=allow_gemini,
+            user_id=current_user.id,
         )
         if profile_data.get("source") == "gemini":
             gemini_slots -= 1

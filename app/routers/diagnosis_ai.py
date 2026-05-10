@@ -16,6 +16,7 @@ import httpx
 from app.dependencies import get_current_user
 from app.models.user import User
 from app.config import settings
+from app.services.gemini_usage import record_gemini_usage
 from app.services.upload_validation import validate_image_upload
 
 router = APIRouter(prefix="/diagnose-ai", tags=["ai-diagnosis"])
@@ -51,7 +52,7 @@ _GEMINI_PROMPT = """Ти — експерт-агроном. Проаналізу
 
 # ── Gemini API ────────────────────────────────────────────────────────────────
 
-async def _analyze_with_gemini(image_bytes: bytes, mime_type: str) -> dict | None:
+async def _analyze_with_gemini(image_bytes: bytes, mime_type: str, user_id: object | None = None) -> dict | None:
     """Call Google Gemini with the image. Returns parsed JSON or None."""
     if not settings.GEMINI_API_KEY:
         logger.warning("GEMINI_API_KEY not configured")
@@ -73,6 +74,7 @@ async def _analyze_with_gemini(image_bytes: bytes, mime_type: str) -> dict | Non
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
+            await record_gemini_usage("diagnosis", user_id)
             resp = await client.post(
                 f"{_GEMINI_URL}?key={settings.GEMINI_API_KEY}",
                 json=payload,
@@ -166,7 +168,9 @@ async def analyze_photo(
 
     # Run both APIs in parallel
     import asyncio
-    gemini_task = asyncio.create_task(_analyze_with_gemini(image_bytes, validated_upload.content_type))
+    gemini_task = asyncio.create_task(
+        _analyze_with_gemini(image_bytes, validated_upload.content_type, current_user.id)
+    )
     plantnet_task = asyncio.create_task(_identify_with_plantnet(image_bytes))
 
     gemini_result = await gemini_task

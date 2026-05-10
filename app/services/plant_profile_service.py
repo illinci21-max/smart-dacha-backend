@@ -24,6 +24,7 @@ from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.services.gemini_usage import record_gemini_usage
 from app.services.redis_service import get_cache_redis
 
 logger = logging.getLogger(__name__)
@@ -580,7 +581,7 @@ _PROFILE_PROMPT = """Ти — агроном-експерт з 30-річним �
 """
 
 
-async def ask_gemini(plant_name: str, category: str) -> dict | None:
+async def ask_gemini(plant_name: str, category: str, user_id: object | None = None) -> dict | None:
     """
     Крок 4: генерація профілю через Gemini 2.5 Flash.
     Викликається лише коли всі локальні пошуки не дали результату.
@@ -620,6 +621,7 @@ async def ask_gemini(plant_name: str, category: str) -> dict | None:
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
+            await record_gemini_usage("plant_profile", user_id)
             resp = await client.post(
                 f"{_GEMINI_URL}?key={settings.GEMINI_API_KEY}",
                 json=payload,
@@ -653,12 +655,12 @@ async def ask_gemini(plant_name: str, category: str) -> dict | None:
 
 
 async def create_profile_from_gemini(
-    name: str, category: str, db: AsyncSession
+    name: str, category: str, db: AsyncSession, user_id: object | None = None
 ):
     """Генерує профіль через Gemini та зберігає в БД."""
     from app.models.plant_profile import PlantProfile
 
-    gemini_data = await ask_gemini(name, category)
+    gemini_data = await ask_gemini(name, category, user_id=user_id)
     if not gemini_data:
         return None
 
@@ -675,7 +677,11 @@ async def create_profile_from_gemini(
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def lookup_profile(
-    name: str, category: str, db: AsyncSession, allow_gemini: bool = True
+    name: str,
+    category: str,
+    db: AsyncSession,
+    allow_gemini: bool = True,
+    user_id: object | None = None,
 ) -> dict:
     """
     Єдина точка входу для пошуку профілю рослини.
@@ -717,7 +723,7 @@ async def lookup_profile(
 
     # 5. Gemini AI
     if allow_gemini:
-        profile = await create_profile_from_gemini(name, category, db)
+        profile = await create_profile_from_gemini(name, category, db, user_id=user_id)
         if profile:
             return profile.to_dict()
     else:

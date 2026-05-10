@@ -20,6 +20,7 @@ from app.models.plot import Plot
 from app.models.user import User
 from app.models.weather_zone import WeatherZone
 from app.services.fertilizer_profile_service import list_fertilizer_profiles
+from app.services.gemini_usage import get_gemini_usage_by_user, get_gemini_usage_total
 from app.services.protection_profile_service import list_protection_profiles
 from app.services.redis_service import get_cache_redis
 
@@ -310,11 +311,41 @@ async def admin_dashboard(
             or_(WeatherZone.last_fetched_at.is_(None), WeatherZone.last_fetched_at < stale_cutoff)
         )
     ) or 0
-    gemini_used = "n/a"
+    gemini_profile_used = "n/a"
     try:
-        gemini_used = await (await get_cache_redis()).get(f"gemini:profile_lookup:{date.today().isoformat()}") or "0"
+        gemini_profile_used = await (await get_cache_redis()).get(f"gemini:profile_lookup:{date.today().isoformat()}") or "0"
     except Exception:
         pass
+    gemini_today = await get_gemini_usage_total(days=1)
+    gemini_week = await get_gemini_usage_total(days=7)
+    gemini_user_stats = await get_gemini_usage_by_user(days=7, limit=10)
+    gemini_user_ids = []
+    for item in gemini_user_stats:
+        try:
+            gemini_user_ids.append(uuid.UUID(str(item["user_id"])))
+        except ValueError:
+            continue
+    gemini_users = {}
+    if gemini_user_ids:
+        users = (await db.execute(select(User).where(User.id.in_(gemini_user_ids)))).scalars().all()
+        gemini_users = {str(user.id): user for user in users}
+    gemini_rows = []
+    for item in gemini_user_stats:
+        user = gemini_users.get(str(item["user_id"]))
+        label = user.email if user else item["user_id"]
+        gemini_rows.append(
+            "<tr>"
+            f"<td>{_esc(label)}</td>"
+            f"<td>{_esc(item['count'])}</td>"
+            "</tr>"
+        )
+    gemini_table = (
+        "<table><thead><tr><th>User</th><th>Gemini calls, 7d</th></tr></thead><tbody>"
+        + "".join(gemini_rows)
+        + "</tbody></table>"
+        if gemini_rows
+        else "<p class='muted'>No per-user Gemini usage recorded yet.</p>"
+    )
 
     body = f"""
     <h1>Admin Dashboard</h1>
@@ -325,9 +356,14 @@ async def admin_dashboard(
       <div class='card'><div class='muted'>Forum Topics</div><h2>{topic_count}</h2></div>
       <div class='card'><div class='muted'>Forum Replies</div><h2>{reply_count}</h2></div>
       <div class='card'><div class='muted'>Stale Weather Zones</div><h2>{stale_weather}</h2></div>
-      <div class='card'><div class='muted'>Gemini Today</div><h2>{_esc(gemini_used)} / {settings.GEMINI_DAILY_BUDGET}</h2></div>
+      <div class='card'><div class='muted'>Gemini Today</div><h2>{gemini_today}</h2><div class='small'>profile budget: {_esc(gemini_profile_used)} / {settings.GEMINI_DAILY_BUDGET}</div></div>
+      <div class='card'><div class='muted'>Gemini 7 Days</div><h2>{gemini_week}</h2></div>
     </div>
     <div class='grid'>
+      <div class='section'>
+        <h3>Gemini Usage</h3>
+        {gemini_table}
+      </div>
       <div class='section'>
         <h3>Що вже є в MVP</h3>
         <ul>
