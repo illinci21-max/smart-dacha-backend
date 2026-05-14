@@ -1,13 +1,13 @@
 """Add plant profile protection knowledge catalog.
 
-Revision ID: 029_plant_profile_protection_catalog
+Revision ID: 029_profile_protection_catalog
 Revises: 028_plant_profile_agro_rules
 """
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "029_plant_profile_protection_catalog"
+revision = "029_profile_protection_catalog"
 down_revision = "028_plant_profile_agro_rules"
 branch_labels = None
 depends_on = None
