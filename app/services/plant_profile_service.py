@@ -809,7 +809,7 @@ async def ask_gemini(plant_name: str, category: str, user_id: object | None = No
     }
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
             await record_gemini_usage("plant_profile", user_id)
             resp = await client.post(
                 f"{_GEMINI_URL}?key={settings.GEMINI_API_KEY}",
