@@ -693,7 +693,7 @@ _PROFILE_PROMPT = """Ти — агроном-експерт з 30-річним �
   "cold_stress_threshold_c": null,
   "frost_critical_threshold_c": 0,
   "common_diseases": [
-    {
+    {{
       "name": "поширена хвороба",
       "type": "fungal|bacterial|viral|physiological",
       "likelihood": "high|medium|low",
@@ -702,10 +702,10 @@ _PROFILE_PROMPT = """Ти — агроном-експерт з 30-річним �
       "prevention": ["практична профілактика"],
       "treatment": ["що робити при появі симптомів"],
       "notes": "коротка важлива примітка"
-    }
+    }}
   ],
   "common_pests": [
-    {
+    {{
       "name": "поширений шкідник",
       "type": "insect|mite|larva|nematode|rodent|mollusk",
       "likelihood": "high|medium|low",
@@ -714,9 +714,9 @@ _PROFILE_PROMPT = """Ти — агроном-експерт з 30-річним �
       "prevention": ["як зменшити ризик"],
       "treatment": ["механічний/біологічний/хімічний контроль"],
       "notes": "коротка важлива примітка"
-    }
+    }}
   ],
-  "treatment_guide": {
+  "treatment_guide": {{
     "general_prevention": ["санітарія, сівозміна, провітрювання, режим поливу"],
     "biological_controls": ["біопрепарати або корисні організми, якщо доречно"],
     "chemical_controls": ["класи діючих речовин або типи препаратів без торгових назв"],
@@ -725,7 +725,7 @@ _PROFILE_PROMPT = """Ти — агроном-експерт з 30-річним �
     "organic_options": ["механічні та органічні варіанти"],
     "when_to_call_expert": ["коли потрібна лабораторна/фахова діагностика"],
     "safety_notes": ["читати етикетку, строки очікування, ЗІЗ, не обробляти в спеку"]
-  }
+  }}
 }}
 
 ВАЖЛИВО:
