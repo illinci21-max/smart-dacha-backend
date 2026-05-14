@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import String, Float, Integer, DateTime, Text, Index, SmallInteger, UniqueConstraint
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
@@ -89,6 +89,11 @@ class PlantProfile(Base):
     cold_stress_threshold_c: Mapped[float | None] = mapped_column(Float, nullable=True)
     frost_critical_threshold_c: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # ── Practical crop protection knowledge base ────────────────────────────
+    common_diseases: Mapped[list | None] = mapped_column(JSONB, default=list, server_default="[]")
+    common_pests: Mapped[list | None] = mapped_column(JSONB, default=list, server_default="[]")
+    treatment_guide: Mapped[dict | None] = mapped_column(JSONB, default=dict, server_default="{}")
+
     # ── Метадані ─────────────────────────────────────────────────────────
     source: Mapped[str | None] = mapped_column(String(20), default="gemini")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -138,4 +143,7 @@ class PlantProfile(Base):
             "avoid_spray_before_rain_hours": self.avoid_spray_before_rain_hours,
             "cold_stress_threshold_c": self.cold_stress_threshold_c,
             "frost_critical_threshold_c": self.frost_critical_threshold_c,
+            "common_diseases": self.common_diseases or [],
+            "common_pests": self.common_pests or [],
+            "treatment_guide": self.treatment_guide or {},
         }

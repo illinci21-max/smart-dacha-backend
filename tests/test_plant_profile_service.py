@@ -68,3 +68,49 @@ def test_sanitize_profile_data_keeps_agro_analysis_rules():
     assert profile["avoid_spray_before_rain_hours"] == 8
     assert profile["cold_stress_threshold_c"] == 0
     assert profile["frost_critical_threshold_c"] == -2
+
+
+def test_sanitize_profile_data_keeps_protection_catalog():
+    profile = sanitize_profile_data(
+        {
+            "common_diseases": [
+                {
+                    "name": "Дідімела / пурпурова плямистість пагонів",
+                    "type": "fungal",
+                    "likelihood": "high",
+                    "symptoms": ["пурпурові плями на пагонах", "відмирання кори"],
+                    "risk_conditions": ["загущені посадки", "волога погода"],
+                    "prevention": ["вирізати уражені пагони", "не загущувати ряд"],
+                    "treatment": ["санітарна обрізка", "фунгіцид за етикеткою"],
+                }
+            ],
+            "common_pests": [
+                {
+                    "name": "Малинний жук",
+                    "type": "insect",
+                    "likelihood": "high",
+                    "symptoms": ["червиві ягоди"],
+                    "prevention": ["струшування жуків до цвітіння"],
+                    "treatment": ["обробка до цвітіння дозволеним інсектицидом"],
+                }
+            ],
+            "treatment_guide": {
+                "general_prevention": ["санітарна обрізка", "провітрювання ряду"],
+                "biological_controls": ["біофунгіциди Bacillus/Trichoderma"],
+                "chemical_controls": ["контактні або системні фунгіциди за етикеткою"],
+                "safety_notes": ["не обробляти у спеку", "дотримуватись строку очікування"],
+                "unexpected": ["ignored"],
+            },
+        },
+        "Малина",
+        "Ягідні кущі",
+        "gemini",
+    )
+
+    assert profile["common_diseases"][0]["name"] == "Дідімела / пурпурова плямистість пагонів"
+    assert profile["common_diseases"][0]["symptoms"]
+    assert profile["common_pests"][0]["name"] == "Малинний жук"
+    assert profile["common_pests"][0]["treatment"]
+    assert "general_prevention" in profile["treatment_guide"]
+    assert "safety_notes" in profile["treatment_guide"]
+    assert "unexpected" not in profile["treatment_guide"]

@@ -70,6 +70,9 @@ _DEFAULT_PROFILE = {
     "avoid_spray_before_rain_hours": 6,
     "cold_stress_threshold_c": None,
     "frost_critical_threshold_c": None,
+    "common_diseases": [],
+    "common_pests": [],
+    "treatment_guide": {},
 }
 
 _ALIASES = {
@@ -305,6 +308,82 @@ def _as_int(value: Any, default: int) -> int:
         return default
 
 
+def _limit_text(value: Any, max_len: int = 220) -> str:
+    return str(value or "").strip()[:max_len]
+
+
+def _sanitize_problem_list(items: Any, *, max_items: int = 12) -> list[dict]:
+    if not isinstance(items, list):
+        return []
+
+    sanitized: list[dict] = []
+    for raw in items[:max_items]:
+        if isinstance(raw, str):
+            name = _limit_text(raw, 120)
+            if name:
+                sanitized.append({"name": name})
+            continue
+        if not isinstance(raw, dict):
+            continue
+        name = _limit_text(raw.get("name") or raw.get("disease") or raw.get("pest"), 120)
+        if not name:
+            continue
+        item = {
+            "name": name,
+            "type": _limit_text(raw.get("type"), 40),
+            "likelihood": _limit_text(raw.get("likelihood") or raw.get("risk"), 40),
+            "symptoms": [
+                _limit_text(symptom, 160)
+                for symptom in (raw.get("symptoms") or [])[:6]
+                if _limit_text(symptom, 160)
+            ],
+            "risk_conditions": [
+                _limit_text(condition, 160)
+                for condition in (raw.get("risk_conditions") or raw.get("conditions") or [])[:6]
+                if _limit_text(condition, 160)
+            ],
+            "prevention": [
+                _limit_text(step, 180)
+                for step in (raw.get("prevention") or [])[:6]
+                if _limit_text(step, 180)
+            ],
+            "treatment": [
+                _limit_text(step, 180)
+                for step in (raw.get("treatment") or raw.get("control") or [])[:6]
+                if _limit_text(step, 180)
+            ],
+            "notes": _limit_text(raw.get("notes"), 220),
+        }
+        sanitized.append({key: value for key, value in item.items() if value})
+    return sanitized
+
+
+def _sanitize_treatment_guide(value: Any) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    allowed_keys = (
+        "general_prevention",
+        "biological_controls",
+        "chemical_controls",
+        "copper_controls",
+        "pest_controls",
+        "organic_options",
+        "when_to_call_expert",
+        "safety_notes",
+    )
+    guide: dict[str, list[str]] = {}
+    for key in allowed_keys:
+        raw_items = value.get(key)
+        if isinstance(raw_items, str):
+            raw_items = [raw_items]
+        if not isinstance(raw_items, list):
+            continue
+        items = [_limit_text(item, 180) for item in raw_items[:8] if _limit_text(item, 180)]
+        if items:
+            guide[key] = items
+    return guide
+
+
 def _with_defaults(data: dict | None, name: str, category: str, source: str) -> dict:
     profile = {**_DEFAULT_PROFILE, **(data or {})}
     profile["name"] = str(profile.get("name") or name).strip() or name
@@ -381,6 +460,10 @@ def sanitize_profile_data(
         )
         warnings.append("harvest day range swapped")
 
+    profile["common_diseases"] = _sanitize_problem_list(profile.get("common_diseases"), max_items=12)
+    profile["common_pests"] = _sanitize_problem_list(profile.get("common_pests"), max_items=12)
+    profile["treatment_guide"] = _sanitize_treatment_guide(profile.get("treatment_guide"))
+
     profile["profile_confidence"] = {
         "curated": 95,
         "catalog": 82,
@@ -409,6 +492,7 @@ def _profile_kwargs(profile: dict) -> dict:
         "copper_fungicide_allowed_from_day", "max_spray_temp_c",
         "avoid_spray_before_rain_hours", "cold_stress_threshold_c",
         "frost_critical_threshold_c",
+        "common_diseases", "common_pests", "treatment_guide",
     ]
     return {field: profile.get(field) for field in fields if field in profile}
 
@@ -607,7 +691,41 @@ _PROFILE_PROMPT = """Ти — агроном-експерт з 30-річним �
   "max_spray_temp_c": 28,
   "avoid_spray_before_rain_hours": 6,
   "cold_stress_threshold_c": null,
-  "frost_critical_threshold_c": 0
+  "frost_critical_threshold_c": 0,
+  "common_diseases": [
+    {
+      "name": "поширена хвороба",
+      "type": "fungal|bacterial|viral|physiological",
+      "likelihood": "high|medium|low",
+      "symptoms": ["типова ознака 1", "типова ознака 2"],
+      "risk_conditions": ["коли найчастіше виникає"],
+      "prevention": ["практична профілактика"],
+      "treatment": ["що робити при появі симптомів"],
+      "notes": "коротка важлива примітка"
+    }
+  ],
+  "common_pests": [
+    {
+      "name": "поширений шкідник",
+      "type": "insect|mite|larva|nematode|rodent|mollusk",
+      "likelihood": "high|medium|low",
+      "symptoms": ["типове пошкодження"],
+      "risk_conditions": ["коли шкодить найбільше"],
+      "prevention": ["як зменшити ризик"],
+      "treatment": ["механічний/біологічний/хімічний контроль"],
+      "notes": "коротка важлива примітка"
+    }
+  ],
+  "treatment_guide": {
+    "general_prevention": ["санітарія, сівозміна, провітрювання, режим поливу"],
+    "biological_controls": ["біопрепарати або корисні організми, якщо доречно"],
+    "chemical_controls": ["класи діючих речовин або типи препаратів без торгових назв"],
+    "copper_controls": ["коли доречні/недоречні мідьвмісні препарати"],
+    "pest_controls": ["базова стратегія проти шкідників"],
+    "organic_options": ["механічні та органічні варіанти"],
+    "when_to_call_expert": ["коли потрібна лабораторна/фахова діагностика"],
+    "safety_notes": ["читати етикетку, строки очікування, ЗІЗ, не обробляти в спеку"]
+  }
 }}
 
 ВАЖЛИВО:
@@ -639,6 +757,16 @@ _PROFILE_PROMPT += """
 - frost_critical_threshold_c — температура, нижче якої є ризик реального пошкодження морозом у поточній культурі/фазі. Для теплолюбних овочів може бути 0..+2, для малини/смородини часто мінусова.
 - Для томатів/перцю/огірків після висадки розсади: біозахист можна майже одразу, профілактичні хімічні фунгіциди краще через 5-7 днів, сильні/мідьвмісні — обережно після адаптації.
 - Для багаторічних ягідних кущів і плодових культур не став cold_stress_threshold_c як t_min_growth; попереджай тільки про температуру, яка реально шкодить листю/квітам/зав'язі.
+
+БАЗА ХВОРОБ, ШКІДНИКІВ І ЛІКУВАННЯ:
+- common_diseases: дай 8-12 найчастіших хвороб саме для практичної присадибної ділянки в Україні/помірному кліматі. Не обмежуйся тільки хворобами з FAO/Kc моделі.
+- common_pests: дай 8-12 найчастіших шкідників для цієї культури на практиці.
+- Для кожної хвороби/шкідника дай: name, type, likelihood, symptoms, risk_conditions, prevention, treatment, notes.
+- treatment_guide має бути загальним практичним довідником по культурі: профілактика, біологічні засоби, хімічні класи без торгових назв, мідьвмісні обмеження, органічні методи, safety notes.
+- Не вигадуй торгові назви препаратів. Пиши класи/типи: біофунгіциди Bacillus/Trichoderma, мідьвмісні, контактні фунгіциди, системні фунгіциди, інсектициди проти сисних/гризучих тощо.
+- Обов'язково враховуй фазу рослини, погоду, строки очікування, температуру обробки і безпеку.
+- Якщо культура — малина, у common_diseases мають бути: дідімела/пурпурова плямистість пагонів, антракноз, сіра гниль ягід, фітофторозна коренева гниль, вертицильозне в'янення, іржа малини, борошниста роса, біла плямистість листя, кореневий рак, вірусна мозаїка/кущиста карликовість.
+- Якщо культура — малина, у common_pests мають бути: малинний жук, сунично-малинний довгоносик, попелиця, павутинний кліщ, малинна стеблова муха, малинна галиця, плямистокрила дрозофіла, личинки хруща, дротяник, опухлики.
 """
 
 
