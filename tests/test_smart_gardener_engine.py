@@ -746,6 +746,41 @@ def test_fungicide_hidden_before_harvest_interval():
     assert hidden["recommendation_type"] in {"контактний фунгіцид", "системний фунгіцид"}
     assert any("pre-harvest interval" in item for item in hidden["constraints"])
 
+
+def test_young_tomato_preventive_fungicide_waits_for_adaptation():
+    analysis = generate_analysis(
+        [{"col": 1, "row": 2, "plant_type": "\u0422\u043e\u043c\u0430\u0442", "planted_date": "2026-04-18", "category": "\u041e\u0432\u043e\u0447\u0456"}],
+        {"\u0422\u043e\u043c\u0430\u0442": {**PROFILE, "sus_late_blight": 0.95}},
+        today=date(2026, 4, 20),
+        weather_today=_weather(20, rain=2, humidity=88, temp_max=22, temp_min=14),
+        weather_history=[_weather(i, rain=2, humidity=88, temp_max=22, temp_min=14) for i in range(13, 20)],
+        weather_forecast=[
+            _weather(21, rain=3, humidity=90, temp_max=21, temp_min=13),
+            _weather(22, rain=2, humidity=88, temp_max=20, temp_min=12),
+        ],
+        soil_type="clay",
+    )
+
+    assert not any(t["task_type"] == "disease_protection" for t in analysis["tasks"])
+    hidden = next(t for t in analysis["hidden_tasks"] if t["task_type"] == "disease_protection")
+    assert hidden["is_hidden"] is True
+    assert any("адаптації" in reason for reason in hidden["blocked_reasons"])
+
+
+def test_biofungicide_is_allowed_immediately_after_transplanting():
+    engine = SmartGardenerEngine()
+    plant = engine._parse_grid_cells(
+        [{"col": 1, "row": 2, "plant_type": "\u0422\u043e\u043c\u0430\u0442", "planted_date": "2026-04-19"}],
+        date(2026, 4, 20),
+    )[0]
+    plant.last_disease_observed_at = datetime(2026, 4, 20)
+    profile = crop_profile_from_backend("\u0422\u043e\u043c\u0430\u0442", "\u041e\u0432\u043e\u0447\u0456", PROFILE)
+    product = recommend_protection("observed_symptoms", 0.4).profile
+
+    assert product.id == "bacillus_biocontrol"
+    assert SmartGardenerEngine._disease_timing_blockers(plant, product, profile, date(2026, 4, 20)) == []
+
+
 WATERMELON_PROFILE = {
     **PROFILE,
     "emoji": "🍉",
@@ -807,6 +842,50 @@ def test_frost_protection_suppresses_duplicate_cold_stress_for_same_plant():
 
     assert any(t["task_type"] == "frost_protection" for t in tasks)
     assert not any(t["task_type"] == "cold_stress" for t in tasks)
+
+
+RASPBERRY_PROFILE = {
+    **PROFILE,
+    "emoji": "\U0001f347",
+    "category": "\u042f\u0433\u0456\u0434\u043d\u0456 \u043a\u0443\u0449\u0456",
+    "t_min_growth": 8,
+    "t_optimal_min": 16,
+    "frost_tolerance": -2,
+}
+
+
+def test_raspberry_positive_chill_does_not_trigger_cold_stress():
+    tasks = generate_tasks(
+        [{"col": 1, "row": 2, "plant_type": "Raspberry", "planted_date": "2026-04-01", "category": "Berries"}],
+        {"Raspberry": RASPBERRY_PROFILE},
+        today=date(2026, 4, 20),
+        weather_today=_weather(20, temp_max=10, temp_min=2),
+        weather_forecast=[
+            _weather(21, temp_max=9, temp_min=2),
+            _weather(22, temp_max=11, temp_min=3),
+            _weather(23, temp_max=12, temp_min=4),
+        ],
+        soil_type="loam",
+    )
+
+    assert not any(t["task_type"] == "cold_stress" for t in tasks)
+
+
+def test_raspberry_subzero_cooling_triggers_cold_stress():
+    tasks = generate_tasks(
+        [{"col": 1, "row": 2, "plant_type": "Raspberry", "planted_date": "2026-04-01", "category": "Berries"}],
+        {"Raspberry": RASPBERRY_PROFILE},
+        today=date(2026, 4, 20),
+        weather_today=_weather(20, temp_max=10, temp_min=2),
+        weather_forecast=[
+            _weather(21, temp_max=8, temp_min=-1),
+            _weather(22, temp_max=11, temp_min=3),
+        ],
+        soil_type="loam",
+    )
+
+    cold = next(t for t in tasks if t["task_type"] == "cold_stress")
+    assert cold["due_date"] == "2026-04-21"
 
 
 def _watering_liters(tasks: list[dict]) -> float:

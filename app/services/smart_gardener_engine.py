@@ -116,6 +116,15 @@ class CropProfile:
     })
     days_to_harvest_min: int = 60
     days_to_harvest_max: int = 90
+    disease_protection_adaptation_days: int = 5
+    disease_protection_early_symptom_days: int = 2
+    biofungicide_allowed_from_day: int = 0
+    chemical_fungicide_allowed_from_day: int = 5
+    copper_fungicide_allowed_from_day: int = 7
+    max_spray_temp_c: float = 28
+    avoid_spray_before_rain_hours: int = 6
+    cold_stress_threshold_c: float | None = None
+    frost_critical_threshold_c: float | None = None
     profile_confidence: int = 80
     validation_warnings: list[str] = field(default_factory=list)
 
@@ -684,10 +693,15 @@ def get_soil_properties(soil_type: str | None, plot_overrides: PlotOverrides | N
 
 def crop_profile_from_backend(name: str, category: str | None, data: dict | None) -> CropProfile:
     data = data or {}
+    crop_name = str(name or "")
+    crop_category = str(data.get("category") or category or "\u041a\u0443\u043b\u044c\u0442\u0443\u0440\u0430")
+    cold_stress_threshold = data.get("cold_stress_threshold_c")
+    if cold_stress_threshold is None and crop_name.strip().lower() in {"\u043c\u0430\u043b\u0438\u043d\u0430", "raspberry"}:
+        cold_stress_threshold = 0
     return CropProfile(
         name=name,
         emoji=str(data.get("emoji") or "??"),
-        category=str(data.get("category") or category or "\u041a\u0443\u043b\u044c\u0442\u0443\u0440\u0430"),
+        category=crop_category,
         kc=KcStages(
             initial_days=_to_int(data.get("initial_days"), 20),
             development_days=_to_int(data.get("development_days"), 30),
@@ -726,6 +740,23 @@ def crop_profile_from_backend(name: str, category: str | None, data: dict | None
         },
         days_to_harvest_min=_to_int(data.get("days_to_harvest_min"), 60),
         days_to_harvest_max=_to_int(data.get("days_to_harvest_max"), 90),
+        disease_protection_adaptation_days=_to_int(data.get("disease_protection_adaptation_days"), 5),
+        disease_protection_early_symptom_days=_to_int(data.get("disease_protection_early_symptom_days"), 2),
+        biofungicide_allowed_from_day=_to_int(data.get("biofungicide_allowed_from_day"), 0),
+        chemical_fungicide_allowed_from_day=_to_int(data.get("chemical_fungicide_allowed_from_day"), 5),
+        copper_fungicide_allowed_from_day=_to_int(data.get("copper_fungicide_allowed_from_day"), 7),
+        max_spray_temp_c=_to_float(data.get("max_spray_temp_c"), 28),
+        avoid_spray_before_rain_hours=_to_int(data.get("avoid_spray_before_rain_hours"), 6),
+        cold_stress_threshold_c=(
+            None
+            if cold_stress_threshold is None
+            else _to_float(cold_stress_threshold, 0)
+        ),
+        frost_critical_threshold_c=(
+            None
+            if data.get("frost_critical_threshold_c") is None
+            else _to_float(data.get("frost_critical_threshold_c"), _to_float(data.get("frost_tolerance"), 0))
+        ),
         profile_confidence=_to_int(data.get("profile_confidence") or data.get("confidence"), 80),
         validation_warnings=list(data.get("validation_warnings") or []),
     )
@@ -1276,7 +1307,8 @@ class SmartGardenerEngine:
         if w_today.temp_max > profile.t_max_growth:
             diag.heat_stress = True
             diag.heat_stress_factor = 1.0 + (w_today.temp_max - profile.t_max_growth) * 0.05
-        if w_today.temp_min <= profile.frost_tolerance:
+        frost_threshold = profile.frost_critical_threshold_c if profile.frost_critical_threshold_c is not None else profile.frost_tolerance
+        if w_today.temp_min <= frost_threshold:
             diag.frost_risk = True
 
         diag.disease_risks = self._assess_disease_risks(profile, w_today, w_forecast, w_history, plant.age_days, phase, soil, plant)
@@ -1948,21 +1980,73 @@ class SmartGardenerEngine:
             weather_day = _weather_date(weather.date or "")
             if weather_day and weather_day < today:
                 continue
-            if weather.temp_min < profile.t_min_growth or weather.temp_avg < profile.t_optimal_min:
+            if SmartGardenerEngine._is_cold_stress_weather(weather, profile):
                 return weather
         return None
+
+    @staticmethod
+    def _is_cold_stress_weather(weather: WeatherSnapshot, profile: CropProfile) -> bool:
+        if profile.cold_stress_threshold_c is not None:
+            return weather.temp_min < profile.cold_stress_threshold_c
+        return weather.temp_min < profile.t_min_growth or weather.temp_avg < profile.t_optimal_min
+
+    @staticmethod
+    def _is_biological_protection(product: Any) -> bool:
+        frac_group = str(getattr(product, "frac_group", "") or "").upper()
+        protection_type = str(getattr(product, "protection_type", "") or "").lower()
+        return frac_group.startswith("BM") or "\u0431\u0456\u043e" in protection_type or "\u0431io" in protection_type
+
+    @staticmethod
+    def _has_recent_disease_symptoms(plant: PlantInstance, today: date, window_days: int = 7) -> bool:
+        if plant.last_disease_observed_at is None:
+            return False
+        return 0 <= (today - plant.last_disease_observed_at.date()).days <= window_days
+
+    @staticmethod
+    def _disease_timing_blockers(
+        plant: PlantInstance,
+        product: Any,
+        profile: CropProfile,
+        today: date,
+    ) -> list[str]:
+        adaptation_days = max(0, profile.disease_protection_adaptation_days)
+        early_symptom_days = max(0, profile.disease_protection_early_symptom_days)
+        if SmartGardenerEngine._is_biological_protection(product):
+            return [] if plant.age_days >= profile.biofungicide_allowed_from_day else [
+                f"\u0411\u0456\u043e\u0437\u0430\u0445\u0438\u0441\u0442 \u0434\u043b\u044f \u0446\u0456\u0454\u0457 \u043a\u0443\u043b\u044c\u0442\u0443\u0440\u0438 \u043a\u0440\u0430\u0449\u0435 \u0437 {profile.biofungicide_allowed_from_day} \u0434\u043d\u044f \u043f\u0456\u0441\u043b\u044f \u0432\u0438\u0441\u0430\u0434\u043a\u0438"
+            ]
+
+        product_id = str(getattr(product, "id", "") or "").lower()
+        frac_group = str(getattr(product, "frac_group", "") or "").upper()
+        is_copper = "copper" in product_id or frac_group == "M01"
+        allowed_from = profile.copper_fungicide_allowed_from_day if is_copper else profile.chemical_fungicide_allowed_from_day
+        wait_days = max(adaptation_days, allowed_from)
+        if plant.age_days >= wait_days:
+            return []
+
+        has_symptoms = SmartGardenerEngine._has_recent_disease_symptoms(plant, today)
+        if has_symptoms and plant.age_days >= early_symptom_days:
+            return [
+                "\u0420\u043e\u0441\u043b\u0438\u043d\u0430 \u0449\u0435 \u043f\u0456\u0441\u043b\u044f \u0432\u0438\u0441\u0430\u0434\u043a\u0438: \u0434\u043b\u044f \u0441\u0438\u043c\u043f\u0442\u043e\u043c\u0456\u0432 \u043d\u0430 2-5 \u0434\u0435\u043d\u044c \u043e\u0431\u0438\u0440\u0430\u0439\u0442\u0435 \u043c'\u044f\u043a\u0438\u0439 \u0431\u0456\u043e\u0437\u0430\u0445\u0438\u0441\u0442; \u043c\u0456\u0434\u043d\u0456 \u0442\u0430 \u0441\u0438\u043b\u044c\u043d\u0456 \u0445\u0456\u043c\u0456\u0447\u043d\u0456 \u0444\u0443\u043d\u0433\u0456\u0446\u0438\u0434\u0438 \u043a\u0440\u0430\u0449\u0435 \u043f\u0456\u0441\u043b\u044f 5-7 \u0434\u043d\u0456\u0432 \u0430\u0434\u0430\u043f\u0442\u0430\u0446\u0456\u0457"
+            ]
+
+        return [
+            f"\u041f\u0456\u0441\u043b\u044f \u0432\u0438\u0441\u0430\u0434\u043a\u0438 \u043c\u0438\u043d\u0443\u043b\u043e {plant.age_days} \u0434\u043d.; \u043f\u0440\u043e\u0444\u0456\u043b\u0430\u043a\u0442\u0438\u0447\u043d\u0443 \u0444\u0443\u043d\u0433\u0456\u0446\u0438\u0434\u043d\u0443 \u043e\u0431\u0440\u043e\u0431\u043a\u0443 \u0434\u043b\u044f \u0446\u0456\u0454\u0457 \u043a\u0443\u043b\u044c\u0442\u0443\u0440\u0438 \u043a\u0440\u0430\u0449\u0435 \u043f\u043b\u0430\u043d\u0443\u0432\u0430\u0442\u0438 \u043f\u0456\u0441\u043b\u044f {wait_days} \u0434\u043d. \u0430\u0434\u0430\u043f\u0442\u0430\u0446\u0456\u0457"
+        ]
 
     @staticmethod
     def _application_blockers(
         w_forecast: list[WeatherSnapshot],
         profile: CropProfile | None = None,
         today: date | None = None,
+        max_temp_c: float | None = None,
     ) -> list[str]:
         blockers: list[str] = []
         window = w_forecast[:2]
         if any(w.precipitation_mm >= 10 or (w.precipitation_mm >= 6 and w.rain_probability >= 70) for w in window):
             blockers.append("\u0441\u0438\u043b\u044c\u043d\u0438\u0439 \u0434\u043e\u0449")
-        if any(w.temp_max >= 30 for w in window):
+        heat_limit = max_temp_c if max_temp_c is not None else 30
+        if any(w.temp_max >= heat_limit for w in window):
             blockers.append("\u0441\u043f\u0435\u043a\u0430")
         if any(w.wind_speed_ms >= _NO_SPRAY_WIND_U2_MS for w in window):
             blockers.append("\u0441\u0438\u043b\u044c\u043d\u0438\u0439 \u0432\u0456\u0442\u0435\u0440")
@@ -1976,15 +2060,17 @@ class SmartGardenerEngine:
         w_forecast: list[WeatherSnapshot],
         today: date,
         profile: CropProfile | None = None,
+        max_temp_c: float | None = None,
     ) -> list[str]:
         messages: list[str] = []
+        heat_limit = max_temp_c if max_temp_c is not None else 30
         for blocker in blockers:
             if blocker == "\u0441\u0438\u043b\u044c\u043d\u0438\u0439 \u0434\u043e\u0449":
                 rainy = next((w for w in w_forecast[:2] if w.precipitation_mm >= 6 or w.rain_probability >= 70), None)
                 if rainy:
                     messages.append(f"\u0412\u043d\u0435\u0441\u0435\u043d\u043d\u044f \u043a\u0440\u0430\u0449\u0435 \u0432\u0456\u0434\u043a\u043b\u0430\u0441\u0442\u0438: {_date_label(rainy.date or today.isoformat(), today)} \u043e\u0447\u0456\u043a\u0443\u0454\u0442\u044c\u0441\u044f {rainy.precipitation_mm:.0f} \u043c\u043c \u0434\u043e\u0449\u0443")
             elif blocker == "\u0441\u043f\u0435\u043a\u0430":
-                hot = next((w for w in w_forecast[:2] if w.temp_max >= 30), None)
+                hot = next((w for w in w_forecast[:2] if w.temp_max >= heat_limit), None)
                 if hot:
                     messages.append(f"\u0412\u043d\u0435\u0441\u0435\u043d\u043d\u044f \u043a\u0440\u0430\u0449\u0435 \u0432\u0456\u0434\u043a\u043b\u0430\u0441\u0442\u0438: {_date_label(hot.date or today.isoformat(), today)} \u0441\u043f\u0435\u043a\u0430 \u0434\u043e {hot.temp_max:.0f}\u00b0C")
             elif blocker == "\u0441\u0438\u043b\u044c\u043d\u0438\u0439 \u0432\u0456\u0442\u0435\u0440":
@@ -2741,12 +2827,22 @@ class SmartGardenerEngine:
         if self._in_cooldown(plant.last_disease_at, today, _DISEASE_COOLDOWN_DAYS):
             return
         v = f" ({plant.variety})" if plant.variety else ""
-        blockers = self._application_blockers(w_forecast)
-        blocked_messages = self._blocked_reason_messages(w_forecast=w_forecast, blockers=blockers, today=today)
         for risk in diag.disease_risks:
             if risk.is_significant:
                 protection = recommend_protection(risk.disease, risk.risk_level)
                 product = protection.profile
+                max_spray_temp = min(
+                    float(getattr(product, "max_temp_c", diag.profile.max_spray_temp_c) or diag.profile.max_spray_temp_c),
+                    diag.profile.max_spray_temp_c,
+                )
+                blockers = self._application_blockers(w_forecast, max_temp_c=max_spray_temp)
+                blocked_messages = self._blocked_reason_messages(
+                    w_forecast=w_forecast,
+                    blockers=blockers,
+                    today=today,
+                    max_temp_c=max_spray_temp,
+                )
+                timing_blockers = self._disease_timing_blockers(plant, product, diag.profile, today)
                 reentry_days = product.reentry_days
                 phi_days = product.pre_harvest_interval_days
                 harvest_in = self._days_until_harvest_start(plant, diag.profile)
@@ -2763,6 +2859,10 @@ class SmartGardenerEngine:
                     *risk.factors,
                     *protection.reasons,
                 ]
+                if self._is_biological_protection(product) and plant.age_days < diag.profile.disease_protection_adaptation_days:
+                    reasons.append("\u0411\u0456\u043e\u0444\u0443\u043d\u0433\u0456\u0446\u0438\u0434\u0438 \u043c\u043e\u0436\u043d\u0430 \u0437\u0430\u0441\u0442\u043e\u0441\u043e\u0432\u0443\u0432\u0430\u0442\u0438 \u043c\u0430\u0439\u0436\u0435 \u043e\u0434\u0440\u0430\u0437\u0443 \u043f\u0456\u0441\u043b\u044f \u0432\u0438\u0441\u0430\u0434\u043a\u0438")
+                elif plant.age_days >= diag.profile.disease_protection_adaptation_days:
+                    reasons.append(f"\u041f\u0456\u0441\u043b\u044f \u0432\u0438\u0441\u0430\u0434\u043a\u0438 \u043c\u0438\u043d\u0443\u043b\u043e {plant.age_days} \u0434\u043d.; \u0432\u0456\u043a\u043d\u043e \u0430\u0434\u0430\u043f\u0442\u0430\u0446\u0456\u0457 5-7 \u0434\u043d\u0456\u0432 \u043f\u0440\u043e\u0439\u0434\u0435\u043d\u043e")
                 reason_groups = {
                     "weather": [f"\u0406\u0441\u0442\u043e\u0440\u0456\u044f: {min(len(w_history), 7)}/7 \u0434\u043d\u0456\u0432", f"\u041f\u0440\u043e\u0433\u043d\u043e\u0437: {min(len(w_forecast), 3)}/3 \u0434\u043d\u0456"],
                     "soil": [],
@@ -2781,6 +2881,7 @@ class SmartGardenerEngine:
                 _append_group(reason_groups, "protection", protection.explanation)
                 constraints = [
                     *blockers,
+                    *timing_blockers,
                     f"FRAC {product.frac_group}",
                     f"re-entry interval {reentry_days} \u0434\u043d.",
                     f"pre-harvest interval {phi_days} \u0434\u043d.",
@@ -2831,6 +2932,11 @@ class SmartGardenerEngine:
                     task.blocked_reasons = resistance_blockers
                     task.constraints = [*constraints, *resistance_blockers]
                     diag.hidden_tasks.append(task)
+                elif timing_blockers:
+                    task.is_hidden = True
+                    task.title = f"\u0417\u0430\u0445\u0438\u0441\u0442 \u0432\u0456\u0434\u043a\u043b\u0430\u0441\u0442\u0438: {_DISEASE_NAMES.get(risk.disease, risk.disease)} \u2014 {plant.plant_type}{v}"
+                    task.blocked_reasons = timing_blockers
+                    diag.hidden_tasks.append(task)
                 elif blockers:
                     task.is_hidden = True
                     task.title = f"\u0417\u0430\u0445\u0438\u0441\u0442 \u0432\u0456\u0434\u043a\u043b\u0430\u0441\u0442\u0438: {_DISEASE_NAMES.get(risk.disease, risk.disease)} \u2014 {plant.plant_type}{v}"
@@ -2849,18 +2955,24 @@ class SmartGardenerEngine:
             weather for weather in w_forecast
             if weather.date and (_weather_date(weather.date) or today) > today
         ][:3]
-        cold_nights_next_3 = sum(1 for weather in upcoming if weather.temp_min < profile.t_min_growth)
-        cool_days_next_3 = sum(1 for weather in upcoming if weather.temp_avg < profile.t_optimal_min)
-        cold_sensitive = profile.t_min_growth >= 10
+        cold_nights_next_3 = sum(1 for weather in upcoming if self._is_cold_stress_weather(weather, profile))
+        cool_days_next_3 = 0 if profile.cold_stress_threshold_c is not None else sum(1 for weather in upcoming if weather.temp_avg < profile.t_optimal_min)
+        cold_sensitive = profile.t_min_growth >= 10 and profile.cold_stress_threshold_c is None
         young_plant = plant.growth_phase == GrowthPhase.INITIAL or plant.age_days < 21
 
         candidates: list[tuple[WeatherSnapshot, str]] = []
-        if w_today.temp_min > profile.frost_tolerance and (w_today.temp_min < profile.t_min_growth or w_today.temp_avg < profile.t_optimal_min):
+        frost_threshold = profile.frost_critical_threshold_c if profile.frost_critical_threshold_c is not None else profile.frost_tolerance
+        today_cold_stress = (
+            self._is_cold_stress_weather(w_today, profile)
+            if profile.cold_stress_threshold_c is not None
+            else w_today.temp_min < profile.t_min_growth
+        )
+        if w_today.temp_min > frost_threshold and today_cold_stress:
             candidates.append((w_today, "\u0441\u044c\u043e\u0433\u043e\u0434\u043d\u0456"))
         for weather in upcoming:
-            if weather.temp_min <= profile.frost_tolerance:
+            if weather.temp_min <= frost_threshold:
                 continue
-            if weather.temp_min < profile.t_min_growth or weather.temp_avg < profile.t_optimal_min:
+            if self._is_cold_stress_weather(weather, profile):
                 candidates.append((weather, _date_label(weather.date, today)))
 
         seen_dates: set[str] = set()
@@ -2876,11 +2988,15 @@ class SmartGardenerEngine:
                 or weather.has_dew
                 or weather.is_fog
             ) and weather.wind_speed_ms >= _COLD_WET_WINDY_U2_MS
-            near_frost = weather.temp_min <= profile.frost_tolerance + 1.0
+            near_frost = (
+                weather.temp_min < profile.cold_stress_threshold_c
+                if profile.cold_stress_threshold_c is not None
+                else weather.temp_min <= frost_threshold + 1.0
+            )
             severity = 0
-            if weather.temp_min < profile.t_min_growth:
+            if self._is_cold_stress_weather(weather, profile):
                 severity += 1
-            if weather.temp_avg < profile.t_optimal_min:
+            if profile.cold_stress_threshold_c is None and weather.temp_avg < profile.t_optimal_min:
                 severity += 1
             if cold_nights_next_3 >= 2:
                 severity += 1
@@ -2963,12 +3079,13 @@ class SmartGardenerEngine:
     def _generate_climate_tasks(self, plant: PlantInstance, profile: CropProfile, diag: CellDiagnostics, w_today: WeatherSnapshot, w_forecast: list[WeatherSnapshot], today: date) -> None:
         frost_cooldown = self._in_cooldown(plant.last_frost_protection_at, today, _FROST_COOLDOWN_DAYS)
         v = f" ({plant.variety})" if plant.variety else ""
+        frost_threshold = profile.frost_critical_threshold_c if profile.frost_critical_threshold_c is not None else profile.frost_tolerance
         if diag.frost_risk and not frost_cooldown:
             diag.tasks.append(GardenTask(
                 TaskType.FROST_PROTECTION,
                 TaskPriority.CRITICAL,
                 f"\u0417\u0430\u043c\u043e\u0440\u043e\u0437\u043e\u043a: {plant.plant_type}{v}",
-                f"\u041c\u0456\u043d\u0456\u043c\u0430\u043b\u044c\u043d\u0430 \u0442\u0435\u043c\u043f\u0435\u0440\u0430\u0442\u0443\u0440\u0430 {w_today.temp_min:.0f}\u00b0C \u043d\u0438\u0436\u0447\u0430 \u0437\u0430 \u043c\u0435\u0436\u0443 \u0441\u0442\u0456\u0439\u043a\u043e\u0441\u0442\u0456 \u043a\u0443\u043b\u044c\u0442\u0443\u0440\u0438 ({profile.frost_tolerance:.0f}\u00b0C). \u0422\u0435\u0440\u043c\u0456\u043d\u043e\u0432\u043e \u043f\u0456\u0434\u0433\u043e\u0442\u0443\u0439\u0442\u0435 \u0443\u043a\u0440\u0438\u0442\u0442\u044f.",
+                f"\u041c\u0456\u043d\u0456\u043c\u0430\u043b\u044c\u043d\u0430 \u0442\u0435\u043c\u043f\u0435\u0440\u0430\u0442\u0443\u0440\u0430 {w_today.temp_min:.0f}\u00b0C \u043d\u0438\u0436\u0447\u0430 \u0437\u0430 \u043a\u0440\u0438\u0442\u0438\u0447\u043d\u0443 \u043c\u0435\u0436\u0443 \u043a\u0443\u043b\u044c\u0442\u0443\u0440\u0438 ({frost_threshold:.0f}\u00b0C). \u0422\u0435\u0440\u043c\u0456\u043d\u043e\u0432\u043e \u043f\u0456\u0434\u0433\u043e\u0442\u0443\u0439\u0442\u0435 \u0443\u043a\u0440\u0438\u0442\u0442\u044f.",
                 plant.plant_type,
                 plant.variety,
                 plant.cell_col,
@@ -2976,7 +3093,7 @@ class SmartGardenerEngine:
                 confidence=97,
                 reasons=[
                     f"\u0417\u0430\u043c\u043e\u0440\u043e\u0437\u043e\u043a: \u0441\u044c\u043e\u0433\u043e\u0434\u043d\u0456 {w_today.temp_min:.0f}\u00b0C",
-                    f"\u041c\u0435\u0436\u0430 \u0441\u0442\u0456\u0439\u043a\u043e\u0441\u0442\u0456: {profile.frost_tolerance:.0f}\u00b0C",
+                    f"\u041a\u0440\u0438\u0442\u0438\u0447\u043d\u0430 \u043c\u0435\u0436\u0430: {frost_threshold:.0f}\u00b0C",
                 ],
             ))
         upcoming = [
@@ -2984,13 +3101,13 @@ class SmartGardenerEngine:
             if weather.date and (_weather_date(weather.date) or today) > today
         ]
         for weather in upcoming[:3]:
-            if weather.temp_min <= profile.frost_tolerance and not frost_cooldown:
+            if weather.temp_min <= frost_threshold and not frost_cooldown:
                 label = _date_label(weather.date, today)
                 diag.tasks.append(GardenTask(
                     TaskType.FROST_PROTECTION,
                     TaskPriority.HIGH,
                     f"\u0417\u0430\u043c\u043e\u0440\u043e\u0437\u043e\u043a {label}: {plant.plant_type}",
-                    f"\u041f\u0440\u043e\u0433\u043d\u043e\u0437 \u043d\u0430 {label}: \u043c\u0456\u043d. {weather.temp_min:.0f}\u00b0C, \u0449\u043e \u043d\u0438\u0436\u0447\u0435 \u0437\u0430 \u043c\u0435\u0436\u0443 \u0441\u0442\u0456\u0439\u043a\u043e\u0441\u0442\u0456 {profile.frost_tolerance:.0f}\u00b0C. \u041f\u0456\u0434\u0433\u043e\u0442\u0443\u0439\u0442\u0435 \u0430\u0433\u0440\u043e\u0432\u043e\u043b\u043e\u043a\u043d\u043e \u0430\u0431\u043e \u0456\u043d\u0448\u0435 \u0443\u043a\u0440\u0438\u0442\u0442\u044f.",
+                    f"\u041f\u0440\u043e\u0433\u043d\u043e\u0437 \u043d\u0430 {label}: \u043c\u0456\u043d. {weather.temp_min:.0f}\u00b0C, \u0449\u043e \u043d\u0438\u0436\u0447\u0435 \u0437\u0430 \u043a\u0440\u0438\u0442\u0438\u0447\u043d\u0443 \u043c\u0435\u0436\u0443 {frost_threshold:.0f}\u00b0C. \u041f\u0456\u0434\u0433\u043e\u0442\u0443\u0439\u0442\u0435 \u0430\u0433\u0440\u043e\u0432\u043e\u043b\u043e\u043a\u043d\u043e \u0430\u0431\u043e \u0456\u043d\u0448\u0435 \u0443\u043a\u0440\u0438\u0442\u0442\u044f.",
                     plant.plant_type,
                     "",
                     plant.cell_col,
@@ -2999,7 +3116,7 @@ class SmartGardenerEngine:
                     confidence=95,
                     reasons=[
                         f"\u0417\u0430\u043c\u043e\u0440\u043e\u0437\u043e\u043a: {label} {weather.temp_min:.0f}\u00b0C",
-                        f"\u041c\u0435\u0436\u0430 \u0441\u0442\u0456\u0439\u043a\u043e\u0441\u0442\u0456: {profile.frost_tolerance:.0f}\u00b0C",
+                        f"\u041a\u0440\u0438\u0442\u0438\u0447\u043d\u0430 \u043c\u0435\u0436\u0430: {frost_threshold:.0f}\u00b0C",
                         f"\u0414\u0430\u0442\u0430 \u043f\u0440\u043e\u0433\u043d\u043e\u0437\u0443: {weather.date[:10]}",
                     ],
                 ))

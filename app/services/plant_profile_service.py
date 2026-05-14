@@ -61,6 +61,15 @@ _DEFAULT_PROFILE = {
     "sus_botrytis": 0.2,
     "days_to_harvest_min": 60,
     "days_to_harvest_max": 90,
+    "disease_protection_adaptation_days": 5,
+    "disease_protection_early_symptom_days": 2,
+    "biofungicide_allowed_from_day": 0,
+    "chemical_fungicide_allowed_from_day": 5,
+    "copper_fungicide_allowed_from_day": 7,
+    "max_spray_temp_c": 28,
+    "avoid_spray_before_rain_hours": 6,
+    "cold_stress_threshold_c": None,
+    "frost_critical_threshold_c": None,
 }
 
 _ALIASES = {
@@ -221,6 +230,7 @@ _FLOAT_RANGES = {
     "sus_powdery_mildew": (0, 1),
     "sus_downy_mildew": (0, 1),
     "sus_botrytis": (0, 1),
+    "max_spray_temp_c": (18, 35),
 }
 
 _INT_RANGES = {
@@ -230,6 +240,12 @@ _INT_RANGES = {
     "late_season_days": (5, 90),
     "days_to_harvest_min": (15, 365),
     "days_to_harvest_max": (20, 450),
+    "disease_protection_adaptation_days": (0, 21),
+    "disease_protection_early_symptom_days": (0, 14),
+    "biofungicide_allowed_from_day": (0, 14),
+    "chemical_fungicide_allowed_from_day": (0, 21),
+    "copper_fungicide_allowed_from_day": (0, 21),
+    "avoid_spray_before_rain_hours": (0, 48),
 }
 
 
@@ -321,6 +337,20 @@ def sanitize_profile_data(
             warnings.append(f"{key}: {raw} -> {value}")
         profile[key] = value
 
+    for key, (low, high) in {
+        "cold_stress_threshold_c": (-15, 15),
+        "frost_critical_threshold_c": (-35, 8),
+    }.items():
+        raw_value = profile.get(key)
+        if raw_value is None or raw_value == "":
+            profile[key] = None
+            continue
+        raw = _as_float(raw_value, float(_DEFAULT_PROFILE["frost_tolerance"]))
+        value = _clamp(raw, low, high)
+        if value != raw:
+            warnings.append(f"{key}: {raw} -> {value}")
+        profile[key] = value
+
     if profile["root_depth_initial_cm"] > profile["root_depth_max_cm"]:
         warnings.append("root_depth_initial_cm capped to root_depth_max_cm")
         profile["root_depth_initial_cm"] = profile["root_depth_max_cm"]
@@ -374,6 +404,11 @@ def _profile_kwargs(profile: dict) -> dict:
         "nitrogen", "phosphorus", "potassium", "magnesium", "calcium",
         "sus_late_blight", "sus_powdery_mildew", "sus_downy_mildew", "sus_botrytis",
         "days_to_harvest_min", "days_to_harvest_max",
+        "disease_protection_adaptation_days", "disease_protection_early_symptom_days",
+        "biofungicide_allowed_from_day", "chemical_fungicide_allowed_from_day",
+        "copper_fungicide_allowed_from_day", "max_spray_temp_c",
+        "avoid_spray_before_rain_hours", "cold_stress_threshold_c",
+        "frost_critical_threshold_c",
     ]
     return {field: profile.get(field) for field in fields if field in profile}
 
@@ -563,7 +598,16 @@ _PROFILE_PROMPT = """Ти — агроном-експерт з 30-річним �
   "sus_downy_mildew": 0.3,
   "sus_botrytis": 0.2,
   "days_to_harvest_min": 60,
-  "days_to_harvest_max": 90
+  "days_to_harvest_max": 90,
+  "disease_protection_adaptation_days": 5,
+  "disease_protection_early_symptom_days": 2,
+  "biofungicide_allowed_from_day": 0,
+  "chemical_fungicide_allowed_from_day": 5,
+  "copper_fungicide_allowed_from_day": 7,
+  "max_spray_temp_c": 28,
+  "avoid_spray_before_rain_hours": 6,
+  "cold_stress_threshold_c": null,
+  "frost_critical_threshold_c": 0
 }}
 
 ВАЖЛИВО:
@@ -578,6 +622,23 @@ _PROFILE_PROMPT = """Ти — агроном-експерт з 30-річним �
 - Вразливість до хвороб 0.0-1.0 (0=стійка, 1=дуже вразлива)
 - Дні до врожаю — від висадки до першого збору
 - Якщо не впевнений у точних даних, обери консервативне середнє значення, не екстремум
+"""
+
+
+_PROFILE_PROMPT += """
+
+ДОДАТКОВІ ПРАВИЛА ДЛЯ ТОЧНОГО АГРОАНАЛІЗУ:
+- disease_protection_adaptation_days — скільки днів після посадки/висадки рослину краще не навантажувати профілактичними хімічними фунгіцидами.
+- disease_protection_early_symptom_days — з якого дня після посадки при явних симптомах можна обережно радити м'який захист.
+- biofungicide_allowed_from_day — день після посадки, з якого дозволені біофунгіциди / мікробіологічні препарати; часто 0.
+- chemical_fungicide_allowed_from_day — день після посадки, з якого допустимі звичайні хімічні фунгіциди для профілактики.
+- copper_fungicide_allowed_from_day — день після посадки, з якого допустимі мідьвмісні препарати; для ніжної розсади зазвичай не раніше 5-7 днів.
+- max_spray_temp_c — максимальна температура повітря для безпечного обприскування листя цієї культури; якщо не впевнений, став 25-28.
+- avoid_spray_before_rain_hours — скільки годин до очікуваного дощу не варто обприскувати.
+- cold_stress_threshold_c — температура мінімуму ночі, нижче якої потрібне попередження про холодовий стрес. Не плутай із t_min_growth: для морозостійких ягід/дерев/кущів це може бути 0 або нижче, а не +8/+10.
+- frost_critical_threshold_c — температура, нижче якої є ризик реального пошкодження морозом у поточній культурі/фазі. Для теплолюбних овочів може бути 0..+2, для малини/смородини часто мінусова.
+- Для томатів/перцю/огірків після висадки розсади: біозахист можна майже одразу, профілактичні хімічні фунгіциди краще через 5-7 днів, сильні/мідьвмісні — обережно після адаптації.
+- Для багаторічних ягідних кущів і плодових культур не став cold_stress_threshold_c як t_min_growth; попереджай тільки про температуру, яка реально шкодить листю/квітам/зав'язі.
 """
 
 

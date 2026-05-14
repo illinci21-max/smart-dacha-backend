@@ -40,3 +40,31 @@ def test_sanitize_profile_data_clamps_and_repairs_invalid_ranges():
     assert profile["profile_confidence"] < 70
     assert profile["confidence"] == profile["profile_confidence"]
     assert profile["validation_warnings"]
+
+
+def test_sanitize_profile_data_keeps_agro_analysis_rules():
+    profile = sanitize_profile_data(
+        {
+            "disease_protection_adaptation_days": 6,
+            "disease_protection_early_symptom_days": 2,
+            "biofungicide_allowed_from_day": 0,
+            "chemical_fungicide_allowed_from_day": 6,
+            "copper_fungicide_allowed_from_day": 8,
+            "max_spray_temp_c": 27,
+            "avoid_spray_before_rain_hours": 8,
+            "cold_stress_threshold_c": 0,
+            "frost_critical_threshold_c": -2,
+        },
+        "Raspberry",
+        "Berries",
+        "gemini",
+    )
+
+    assert profile["disease_protection_adaptation_days"] == 6
+    assert profile["biofungicide_allowed_from_day"] == 0
+    assert profile["chemical_fungicide_allowed_from_day"] == 6
+    assert profile["copper_fungicide_allowed_from_day"] == 8
+    assert profile["max_spray_temp_c"] == 27
+    assert profile["avoid_spray_before_rain_hours"] == 8
+    assert profile["cold_stress_threshold_c"] == 0
+    assert profile["frost_critical_threshold_c"] == -2
