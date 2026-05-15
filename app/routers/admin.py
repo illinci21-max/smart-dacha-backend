@@ -67,6 +67,69 @@ def _badge(text: str, tone: str = "slate") -> str:
     )
 
 
+def _as_list(value: object) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _join_short(value: object, limit: int = 4) -> str:
+    items = [str(item) for item in _as_list(value) if item]
+    if not items:
+        return "—"
+    shown = items[:limit]
+    suffix = f" +{len(items) - limit}" if len(items) > limit else ""
+    return "; ".join(shown) + suffix
+
+
+def _render_problem_catalog(title: str, items: object) -> str:
+    rows = []
+    for item in _as_list(items):
+        if not isinstance(item, dict):
+            continue
+        likelihood = str(item.get("likelihood") or "unknown")
+        tone = "red" if likelihood == "high" else "amber" if likelihood == "medium" else "slate"
+        rows.append(
+            "<div class='problem-card'>"
+            f"<h4>{_esc(item.get('name') or 'Без назви')} {_badge(likelihood, tone)}</h4>"
+            f"<div class='small'>{_esc(item.get('type') or '')}</div>"
+            f"<p><b>Симптоми:</b> {_esc(_join_short(item.get('symptoms')))}</p>"
+            f"<p><b>Умови ризику:</b> {_esc(_join_short(item.get('risk_conditions')))}</p>"
+            f"<p><b>Профілактика:</b> {_esc(_join_short(item.get('prevention')))}</p>"
+            f"<p><b>Лікування/контроль:</b> {_esc(_join_short(item.get('treatment')))}</p>"
+            f"<p class='small'>{_esc(item.get('notes') or '')}</p>"
+            "</div>"
+        )
+    return (
+        f"<div class='section'><h3>{_esc(title)} ({len(rows)})</h3>"
+        f"<div class='problem-grid'>{''.join(rows) or '<p class=\"muted\">Даних ще немає.</p>'}</div></div>"
+    )
+
+
+def _render_treatment_guide(guide: object) -> str:
+    labels = {
+        "general_prevention": "Загальна профілактика",
+        "biological_controls": "Біологічний контроль",
+        "chemical_controls": "Хімічний контроль",
+        "copper_controls": "Мідьвмісні препарати",
+        "pest_controls": "Контроль шкідників",
+        "organic_options": "Органічні методи",
+        "when_to_call_expert": "Коли потрібен фахівець",
+        "safety_notes": "Безпека",
+    }
+    data = guide if isinstance(guide, dict) else {}
+    rows = []
+    for key, label in labels.items():
+        rows.append(
+            "<tr>"
+            f"<th>{_esc(label)}</th>"
+            f"<td>{_esc(_join_short(data.get(key), limit=8))}</td>"
+            "</tr>"
+        )
+    return (
+        "<div class='section'><h3>Практичний довідник лікування</h3>"
+        f"<table><tbody>{''.join(rows)}</tbody></table></div>"
+    )
+
+
 def _layout(title: str, body: str, user: User | None = None, flash: str | None = None) -> HTMLResponse:
     nav = ""
     if user:
@@ -109,6 +172,10 @@ def _layout(title: str, body: str, user: User | None = None, flash: str | None =
     textarea {{ min-height:100px; resize:vertical; }}
     .grid {{ display:grid; gap:12px; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); }}
     .section {{ background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:16px; margin-bottom:16px; }}
+    .problem-grid {{ display:grid; gap:12px; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); }}
+    .problem-card {{ border:1px solid #e2e8f0; border-radius:8px; padding:12px; background:#f8fafc; }}
+    .problem-card h4 {{ margin:0 0 8px; }}
+    .problem-card p {{ margin:8px 0 0; }}
     .actions {{ display:flex; gap:8px; flex-wrap:wrap; }}
     button {{ padding:8px 12px; border:none; border-radius:6px; background:#166534; color:#fff; cursor:pointer; }}
     button.secondary {{ background:#475569; }}
@@ -484,6 +551,8 @@ async def admin_plant_profiles(
             f"<td><a href='/admin/plant-profiles/{profile.id}'>{_esc(profile.name)}</a><div class='small'>{_esc(profile.category)}</div></td>"
             f"<td>{_badge(profile.source or 'db', 'slate')}</td>"
             f"<td>{_badge(str(profile.confidence), tone)}</td>"
+            f"<td>{len(profile.common_diseases or [])}</td>"
+            f"<td>{len(profile.common_pests or [])}</td>"
             f"<td>{_esc(', '.join(profile.validation_warnings or []) or '—')}</td>"
             f"<td>{_esc(profile.created_at)}</td>"
             "</tr>"
@@ -502,8 +571,8 @@ async def admin_plant_profiles(
       <button type='submit'>Фільтр</button>
     </form>
     <table>
-      <thead><tr><th>Рослина</th><th>Source</th><th>Confidence</th><th>Warnings</th><th>Створено</th></tr></thead>
-      <tbody>{''.join(rows) or "<tr><td colspan='5'>Нічого не знайдено</td></tr>"}</tbody>
+      <thead><tr><th>Рослина</th><th>Source</th><th>Confidence</th><th>Хвороби</th><th>Шкідники</th><th>Warnings</th><th>Створено</th></tr></thead>
+      <tbody>{''.join(rows) or "<tr><td colspan='7'>Нічого не знайдено</td></tr>"}</tbody>
     </table>
     """
     return _layout("Plant Profiles", body, user=admin_user, flash=request.query_params.get("flash"))
@@ -553,6 +622,9 @@ async def admin_plant_profile_detail(
         <textarea name='validation_warnings'>{_esc(warnings_value)}</textarea>
         <div class='small'>Один warning на рядок.</div>
       </div>
+      {_render_problem_catalog("Найчастіші хвороби", profile.common_diseases)}
+      {_render_problem_catalog("Найчастіші шкідники", profile.common_pests)}
+      {_render_treatment_guide(profile.treatment_guide)}
       <div class='actions'>
         <button type='submit'>Зберегти</button>
         <a href='/admin/plant-profiles'>Назад до списку</a>
