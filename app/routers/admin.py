@@ -555,6 +555,9 @@ async def admin_plant_profiles(
             f"<td>{len(profile.common_pests or [])}</td>"
             f"<td>{_esc(', '.join(profile.validation_warnings or []) or '—')}</td>"
             f"<td>{_esc(profile.created_at)}</td>"
+            f"<td><form class='inline' method='post' action='/admin/plant-profiles/{profile.id}/delete' "
+            "onsubmit=\"return confirm('Видалити цей профіль рослини?')\">"
+            "<button class='danger' type='submit'>Видалити</button></form></td>"
             "</tr>"
         )
     body = f"""
@@ -571,8 +574,8 @@ async def admin_plant_profiles(
       <button type='submit'>Фільтр</button>
     </form>
     <table>
-      <thead><tr><th>Рослина</th><th>Source</th><th>Confidence</th><th>Хвороби</th><th>Шкідники</th><th>Warnings</th><th>Створено</th></tr></thead>
-      <tbody>{''.join(rows) or "<tr><td colspan='7'>Нічого не знайдено</td></tr>"}</tbody>
+      <thead><tr><th>Рослина</th><th>Source</th><th>Confidence</th><th>Хвороби</th><th>Шкідники</th><th>Warnings</th><th>Створено</th><th>Дії</th></tr></thead>
+      <tbody>{''.join(rows) or "<tr><td colspan='8'>Нічого не знайдено</td></tr>"}</tbody>
     </table>
     """
     return _layout("Plant Profiles", body, user=admin_user, flash=request.query_params.get("flash"))
@@ -630,6 +633,13 @@ async def admin_plant_profile_detail(
         <a href='/admin/plant-profiles'>Назад до списку</a>
       </div>
     </form>
+    <div class='section'>
+      <h3>Небезпечна зона</h3>
+      <p class='muted'>Видалення прибирає тільки агрономічний профіль з каталогу Plant Profiles. Ділянки, рослини, спостереження і плани робіт користувачів не видаляються.</p>
+      <form method='post' action='/admin/plant-profiles/{profile.id}/delete' onsubmit="return confirm('Остаточно видалити цей профіль рослини?')">
+        <button class='danger' type='submit'>Видалити профіль рослини</button>
+      </form>
+    </div>
     """
     return _layout(f"Plant Profile {profile.name}", body, user=admin_user, flash=request.query_params.get("flash"))
 
@@ -657,6 +667,20 @@ async def admin_plant_profile_update(
     ]
     await db.flush()
     return _redirect(f"/admin/plant-profiles/{profile.id}?flash=Профіль+збережено")
+
+
+@router.post("/plant-profiles/{profile_id}/delete")
+async def admin_plant_profile_delete(
+    profile_id: uuid.UUID,
+    admin_user: User = Depends(_admin_dep),
+    db: AsyncSession = Depends(get_db),
+):
+    profile = await db.scalar(select(PlantProfile).where(PlantProfile.id == profile_id))
+    if not profile:
+        raise HTTPException(status_code=404, detail="Plant profile not found")
+    await db.delete(profile)
+    await db.flush()
+    return _redirect("/admin/plant-profiles?flash=Профіль+видалено")
 
 
 @router.get("/forum", response_class=HTMLResponse)
