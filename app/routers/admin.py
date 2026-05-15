@@ -21,6 +21,7 @@ from app.models.user import User
 from app.models.weather_zone import WeatherZone
 from app.services.fertilizer_profile_service import list_fertilizer_profiles
 from app.services.gemini_usage import get_gemini_usage_by_user, get_gemini_usage_total
+from app.services.plant_profile_service import lookup_profile
 from app.services.protection_profile_service import list_protection_profiles
 from app.services.redis_service import get_cache_redis
 
@@ -562,6 +563,15 @@ async def admin_plant_profiles(
         )
     body = f"""
     <h1>Plant Profiles</h1>
+    <div class='section'>
+      <h3>Додати профіль рослини через Gemini</h3>
+      <form method='post' action='/admin/plant-profiles/create' class='filters'>
+        <input type='text' name='plant_name' placeholder='Назва рослини, наприклад: Абрикос' required>
+        <input type='text' name='category' value='Овочі' placeholder='Категорія'>
+        <button type='submit'>Створити</button>
+      </form>
+      <div class='small'>Якщо профіль уже існує, адмінка відкриє наявний запис. Якщо ні — підтягне дані з Gemini та збере повний агрономічний профіль.</div>
+    </div>
     <form method='get' class='filters'>
       <input type='text' name='q' value='{_esc(q)}' placeholder='Пошук по назві або категорії'>
       <select name='source'>
@@ -579,6 +589,28 @@ async def admin_plant_profiles(
     </table>
     """
     return _layout("Plant Profiles", body, user=admin_user, flash=request.query_params.get("flash"))
+
+
+@router.post("/plant-profiles/create")
+async def admin_plant_profile_create(
+    plant_name: str = Form(...),
+    category: str = Form("Овочі"),
+    admin_user: User = Depends(_admin_dep),
+    db: AsyncSession = Depends(get_db),
+):
+    name = plant_name.strip()
+    category_value = (category or "Овочі").strip() or "Овочі"
+    if not name:
+        return _redirect("/admin/plant-profiles?flash=Назва+рослини+обов'язкова")
+
+    data = await lookup_profile(name, category_value, db, allow_gemini=True, user_id=admin_user.id)
+    profile_name = str(data.get("name") or name).strip()
+    profile = await db.scalar(select(PlantProfile).where(PlantProfile.name == profile_name))
+    if not profile:
+        profile = await db.scalar(select(PlantProfile).where(PlantProfile.name == name))
+    if not profile:
+        return _redirect("/admin/plant-profiles?flash=Gemini+не+створив+профіль")
+    return _redirect(f"/admin/plant-profiles/{profile.id}?flash=Профіль+готовий")
 
 
 @router.get("/plant-profiles/{profile_id}", response_class=HTMLResponse)
