@@ -125,6 +125,8 @@ class CropProfile:
     avoid_spray_before_rain_hours: int = 6
     cold_stress_threshold_c: float | None = None
     frost_critical_threshold_c: float | None = None
+    common_pests: list[dict] = field(default_factory=list)
+    treatment_guide: dict = field(default_factory=dict)
     profile_confidence: int = 80
     validation_warnings: list[str] = field(default_factory=list)
 
@@ -328,6 +330,29 @@ class DiseaseRisk:
         return self.risk_level >= 0.3
 
 
+@dataclass
+class PestRisk:
+    pest: dict
+    risk_level: float
+    priority: TaskPriority
+    description: str
+    recommendation: str
+    factors: list[str] = field(default_factory=list)
+    observed: bool = False
+
+    @property
+    def name(self) -> str:
+        return str(self.pest.get("name") or "шкідник")
+
+    @property
+    def key(self) -> str:
+        return self.name.strip().lower()
+
+    @property
+    def requires_intervention(self) -> bool:
+        return self.observed or self.risk_level >= 0.62
+
+
 @dataclass(frozen=True)
 class DiseaseRiskModel:
     disease: str
@@ -392,6 +417,7 @@ class CellDiagnostics:
     heat_stress_factor: float = 1.0
     nutrient_leaching_risk: float = 0
     disease_risks: list[DiseaseRisk] = field(default_factory=list)
+    pest_risks: list[PestRisk] = field(default_factory=list)
     frost_risk: bool = False
     heat_stress: bool = False
     tasks: list[GardenTask] = field(default_factory=list)
@@ -757,6 +783,8 @@ def crop_profile_from_backend(name: str, category: str | None, data: dict | None
             if data.get("frost_critical_threshold_c") is None
             else _to_float(data.get("frost_critical_threshold_c"), _to_float(data.get("frost_tolerance"), 0))
         ),
+        common_pests=(data.get("common_pests") if isinstance(data.get("common_pests"), list) else []),
+        treatment_guide=(data.get("treatment_guide") if isinstance(data.get("treatment_guide"), dict) else {}),
         profile_confidence=_to_int(data.get("profile_confidence") or data.get("confidence"), 80),
         validation_warnings=list(data.get("validation_warnings") or []),
     )
@@ -1051,6 +1079,12 @@ class SmartGardenerEngine:
                             plant.frac_counts_90d[action.frac_group] = plant.frac_counts_90d.get(action.frac_group, 0) + 1
                             if plant.last_frac_group is None or action.created_at >= plant.last_disease_at:
                                 plant.last_frac_group = action.frac_group
+                elif action.action_type == "pest":
+                    if (today - action.created_at.date()).days <= 90 and action.target_problem:
+                        plant.protection_counts_90d[action.target_problem] = plant.protection_counts_90d.get(action.target_problem, 0) + 1
+                        previous = plant.last_protection_by_problem.get(action.target_problem)
+                        if previous is None or action.created_at > previous:
+                            plant.last_protection_by_problem[action.target_problem] = action.created_at
                 elif action.action_type == "frost":
                     plant.last_frost_protection_at = max(filter(None, [plant.last_frost_protection_at, action.created_at]))
                 elif action.action_type == "harvesting":
@@ -1313,6 +1347,7 @@ class SmartGardenerEngine:
 
         diag.disease_risks = self._assess_disease_risks(profile, w_today, w_forecast, w_history, plant.age_days, phase, soil, plant)
         self._apply_observation_disease_signals(plant, diag)
+        diag.pest_risks = self._assess_pest_risks(profile, w_today, w_forecast, w_history, phase, plant)
         diag.nutrient_leaching_risk = self._assess_nutrient_leaching(w_history, soil)
         self._update_seasonal_nutrient_losses(plant, w_history, soil)
         self._generate_watering_task(plant, profile, diag, depletion_pct, w_forecast, w_history, today, soil)
@@ -1324,6 +1359,7 @@ class SmartGardenerEngine:
         else:
             self._generate_fertilizing_tasks(plant, profile, diag, phase, w_history, w_forecast, today, soil)
         self._generate_disease_tasks(plant, diag, w_history, w_forecast, today)
+        self._generate_pest_tasks(plant, diag, w_forecast, today)
         self._generate_cold_stress_tasks(plant, profile, diag, w_today, w_forecast, today)
         self._generate_climate_tasks(plant, profile, diag, w_today, w_forecast, today)
         self._generate_harvest_task(plant, profile, diag)
@@ -1674,6 +1710,19 @@ class SmartGardenerEngine:
         return any(term in haystack for term in disease_terms)
 
     @staticmethod
+    def _contains_pest_symptom(symptoms: list[str], leaf_condition: str | None = None) -> bool:
+        haystack = " ".join([*(symptoms or []), leaf_condition or ""]).lower()
+        pest_terms = (
+            "aphid", "mite", "spider", "webbing", "beetle", "weevil", "larva",
+            "caterpillar", "worm", "holes", "chewed", "sticky", "honeydew",
+            "eggs", "thrips", "fly", "midge",
+            "попел", "кліщ", "павутин", "жук", "довгонос", "личин",
+            "гусен", "черв", "дір", "об'їд", "обїд", "скручен", "липк",
+            "медв", "трипс", "яйц", "муха", "галиц", "дрозоф",
+        )
+        return any(term in haystack for term in pest_terms)
+
+    @staticmethod
     def _inoculum_pressure(plant: PlantInstance, today: date) -> float:
         if plant.last_disease_observed_at is None:
             return 0.0
@@ -1708,6 +1757,132 @@ class SmartGardenerEngine:
                 f"Користувач зафіксував стрес рослини: {symptom_text}.",
                 "Рекомендація: перевірте вологість ґрунту, корені та нижній бік листя перед обробкою.",
             ))
+    def _assess_pest_risks(
+        self,
+        profile: CropProfile,
+        w_today: WeatherSnapshot,
+        w_forecast: list[WeatherSnapshot],
+        w_history: list[WeatherSnapshot],
+        phase: GrowthPhase,
+        plant: PlantInstance,
+    ) -> list[PestRisk]:
+        pests = [
+            item if isinstance(item, dict) else {"name": str(item), "likelihood": "medium"}
+            for item in profile.common_pests
+            if (isinstance(item, dict) or str(item).strip())
+        ]
+        if not pests:
+            return []
+        weather_window = [*w_history[-3:], w_today, *w_forecast[:3]]
+        risks: list[PestRisk] = []
+        for pest in pests[:12]:
+            name = str(pest.get("name") or "").strip()
+            if not name:
+                continue
+            observed = self._pest_observed(pest, plant)
+            likelihood = self._pest_likelihood_value(pest)
+            weather_score, weather_factors = self._pest_weather_score(pest, weather_window, phase)
+            phase_score = 0.10 if phase in {GrowthPhase.DEVELOPMENT, GrowthPhase.MID_SEASON, GrowthPhase.LATE_SEASON} else 0.04
+            score = min(1.0, likelihood + weather_score + phase_score + (0.35 if observed else 0.0))
+            if score < 0.32 and not observed:
+                continue
+            factors = [
+                f"Базова ймовірність у профілі культури: {likelihood * 100:.0f}%",
+                f"Фаза рослини: {_phase_name(phase)}",
+                *weather_factors,
+            ]
+            if observed:
+                factors.insert(0, "Є ручне спостереження або симптоми, схожі на шкідника")
+            risks.append(PestRisk(
+                pest=pest,
+                risk_level=_round(score, 2),
+                priority=_risk_to_priority(score),
+                description=f"Ймовірність шкідника «{name}» оцінена за профілем культури, погодою, фазою росту та спостереженнями.",
+                recommendation=str(pest.get("treatment") or pest.get("control") or "Оглянути рослину й обрати IPM-захід за підтвердженим шкідником."),
+                factors=factors,
+                observed=observed,
+            ))
+        risks.sort(key=lambda item: (item.observed, item.risk_level), reverse=True)
+        return risks[:3]
+
+    @staticmethod
+    def _pest_likelihood_value(pest: dict) -> float:
+        value = str(pest.get("likelihood") or pest.get("frequency") or pest.get("risk") or "medium").lower()
+        if any(term in value for term in ("high", "вис", "част")):
+            return 0.38
+        if any(term in value for term in ("low", "низ", "рід")):
+            return 0.16
+        return 0.26
+
+    @staticmethod
+    def _pest_observed(pest: dict, plant: PlantInstance) -> bool:
+        haystack = " ".join([
+            *(plant.observed_symptoms or []),
+            plant.observed_leaf_condition or "",
+        ]).lower()
+        pest_name = str(pest.get("name") or "").lower()
+        name_tokens = [token for token in pest_name.replace("/", " ").replace("-", " ").split() if len(token) >= 4]
+        if any(token in haystack for token in name_tokens):
+            return True
+        return SmartGardenerEngine._contains_pest_symptom(plant.observed_symptoms, plant.observed_leaf_condition)
+
+    @staticmethod
+    def _pest_weather_score(
+        pest: dict,
+        weather_window: list[WeatherSnapshot],
+        phase: GrowthPhase,
+    ) -> tuple[float, list[str]]:
+        if not weather_window:
+            return 0.0, []
+        name = str(pest.get("name") or "").lower()
+        factors: list[str] = []
+        score = 0.0
+        warm_days = sum(1 for weather in weather_window if 16 <= weather.temp_mean <= 30)
+        hot_dry_days = sum(1 for weather in weather_window if weather.temp_max >= 27 and weather.humidity_avg <= 60 and weather.precipitation_mm < 1)
+        wet_days = sum(1 for weather in weather_window if weather.precipitation_mm >= 2 or weather.humidity_avg >= 85)
+        calm_days = sum(1 for weather in weather_window if weather.wind_speed_ms <= 3.5)
+
+        if any(term in name for term in ("mite", "кліщ", "павутин")):
+            score += min(0.34, hot_dry_days * 0.09)
+            if hot_dry_days:
+                factors.append(f"Спекотно й сухо для кліщів: {hot_dry_days}/{len(weather_window)} дн.")
+        elif any(term in name for term in ("aphid", "попел")):
+            score += min(0.30, warm_days * 0.05 + calm_days * 0.03)
+            if warm_days:
+                factors.append(f"Тепле вікно для попелиці: {warm_days}/{len(weather_window)} дн.")
+        elif any(term in name for term in ("slug", "слимак")):
+            score += min(0.30, wet_days * 0.08)
+            if wet_days:
+                factors.append(f"Вологі дні для слимаків: {wet_days}/{len(weather_window)}")
+        elif any(term in name for term in ("beetle", "weevil", "larva", "caterpillar", "worm", "fly", "жук", "довгонос", "личин", "гусен", "черв", "муха", "галиц", "дрозоф")):
+            score += min(0.28, warm_days * 0.06)
+            if phase in {GrowthPhase.DEVELOPMENT, GrowthPhase.MID_SEASON}:
+                score += 0.06
+            if warm_days:
+                factors.append(f"Активне тепле вікно для комах: {warm_days}/{len(weather_window)} дн.")
+        else:
+            score += min(0.22, warm_days * 0.04)
+            if warm_days:
+                factors.append(f"Погодні умови дозволяють активність шкідників: {warm_days}/{len(weather_window)} дн.")
+
+        if any(term in name for term in ("root", "wireworm", "хрущ", "дротяник", "корен")) and phase in {GrowthPhase.INITIAL, GrowthPhase.DEVELOPMENT}:
+            score += 0.08
+            factors.append("Молода коренева система вразливіша до ґрунтових шкідників")
+        return min(0.45, score), factors
+
+    @staticmethod
+    def _pest_guide_lines(profile: CropProfile, pest_name: str) -> list[str]:
+        guide = profile.treatment_guide if isinstance(profile.treatment_guide, dict) else {}
+        lines: list[str] = []
+        for key in ("pest_controls", "biological_controls", "organic_options", "safety_notes"):
+            value = guide.get(key)
+            if isinstance(value, list):
+                lines.extend(str(item) for item in value[:3] if str(item).strip())
+            elif isinstance(value, str) and value.strip():
+                lines.append(value.strip())
+        exact = [line for line in lines if pest_name.lower() in line.lower()]
+        return (exact or lines)[:4]
+
     @staticmethod
     def _assess_nutrient_leaching(w_history: list[WeatherSnapshot], soil: SoilProfile) -> float:
         if len(w_history) < 3:
@@ -2944,6 +3119,120 @@ class SmartGardenerEngine:
                     diag.hidden_tasks.append(task)
                 else:
                     diag.tasks.append(task)
+
+    def _generate_pest_tasks(self, plant: PlantInstance, diag: CellDiagnostics, w_forecast: list[WeatherSnapshot], today: date) -> None:
+        if not diag.pest_risks:
+            return
+        v = f" ({plant.variety})" if plant.variety else ""
+        for risk in diag.pest_risks:
+            last_same_problem_at = plant.last_protection_by_problem.get(risk.key) or plant.last_protection_by_problem.get(risk.name)
+            if last_same_problem_at and (today - last_same_problem_at.date()).days < _DISEASE_COOLDOWN_DAYS:
+                continue
+
+            guide_lines = self._pest_guide_lines(diag.profile, risk.name)
+            count_90d = plant.protection_counts_90d.get(risk.key, 0) + plant.protection_counts_90d.get(risk.name, 0)
+            base_constraints = [
+                "IPM: спочатку підтвердити шкідника оглядом нижнього боку листків, бутонів, пагонів і плодів",
+                "Починати з механічних/біологічних заходів; хімічний інсектицид тільки після підтвердження шкідника і за етикеткою",
+                "Не обробляти під час активного льоту бджіл; безпечніше ввечері або рано-вранці",
+                "Дотримуватись норми внесення, строку очікування, ЗІЗ та обмежень для конкретного препарату",
+                "Ротація IRAC/MoA: не повторювати одну діючу речовину або групу поспіль",
+            ]
+            reason_groups = {
+                "weather": [],
+                "phase": [f"Фаза: {_phase_name(plant.growth_phase)}", f"Вік рослини: {plant.age_days} дн."],
+                "observation": [],
+                "profile": [f"Шкідник з профілю культури: {risk.name}"],
+                "protection": [],
+                "history": [],
+            }
+            reasons = [
+                risk.description,
+                f"Ризик: {risk.risk_level * 100:.0f}%",
+                *risk.factors,
+                risk.recommendation,
+                *guide_lines,
+            ]
+            for factor in risk.factors:
+                if any(word in factor.lower() for word in ("погод", "тепл", "спек", "волог", "сух")):
+                    _append_group(reason_groups, "weather", factor)
+                elif "фаза" in factor.lower():
+                    _append_group(reason_groups, "phase", factor)
+                elif "спостереж" in factor.lower():
+                    _append_group(reason_groups, "observation", factor)
+                else:
+                    _append_group(reason_groups, "profile", factor)
+            if plant.observed_symptoms:
+                _append_group(reason_groups, "observation", f"Симптоми: {', '.join(plant.observed_symptoms[:3])}")
+            if plant.observed_leaf_condition:
+                _append_group(reason_groups, "observation", f"Стан листя: {plant.observed_leaf_condition}")
+            for line in guide_lines:
+                _append_group(reason_groups, "protection", line)
+            if last_same_problem_at:
+                _append_group(reason_groups, "history", f"Останній захист від цього шкідника: {(today - last_same_problem_at.date()).days} дн. тому")
+            if count_90d:
+                _append_group(reason_groups, "history", f"Обробок від цього шкідника за 90 днів: {count_90d}")
+
+            confidence = _confidence(68 + int(risk.risk_level * 22) + (8 if risk.observed else 0))
+            if risk.requires_intervention:
+                blockers = self._application_blockers(
+                    w_forecast,
+                    profile=diag.profile,
+                    today=today,
+                    max_temp_c=min(28, diag.profile.max_spray_temp_c),
+                )
+                blocked_messages = self._blocked_reason_messages(
+                    blockers=blockers,
+                    w_forecast=w_forecast,
+                    today=today,
+                    profile=diag.profile,
+                    max_temp_c=min(28, diag.profile.max_spray_temp_c),
+                )
+                title = f"Інсектицидний/IPM-захист: {risk.name} — {plant.plant_type}{v}"
+                description = (
+                    f"{risk.description} {risk.recommendation} "
+                    "Перед внесенням препарату підтвердіть шкідника: огляд 10-20 листків/бутонів, нижній бік листка, молоді пагони й плоди. "
+                    "Якщо заселення слабке — почніть з ручного видалення, біопрепаратів або м'яких засобів."
+                )
+                task = GardenTask(
+                    TaskType.PEST_CONTROL,
+                    risk.priority,
+                    title,
+                    description,
+                    plant.plant_type,
+                    plant.variety,
+                    plant.cell_col,
+                    plant.cell_row,
+                    confidence=confidence,
+                    reasons=reasons,
+                    reason_groups=reason_groups,
+                    recommendation_type="ipm_insecticide_intervention",
+                    constraints=[*base_constraints, *blockers],
+                )
+                if blockers:
+                    task.is_hidden = True
+                    task.title = f"Інсектицидний захист відкласти: {risk.name} — {plant.plant_type}{v}"
+                    task.blocked_reasons = blocked_messages
+                    diag.hidden_tasks.append(task)
+                else:
+                    diag.tasks.append(task)
+            else:
+                task = GardenTask(
+                    TaskType.PEST_CONTROL,
+                    TaskPriority.MEDIUM,
+                    f"Моніторинг шкідників: {risk.name} — {plant.plant_type}{v}",
+                    f"{risk.description} Поки достатньо огляду й профілактики: перевірте рослини, пастки або нижній бік листків, і втручайтесь лише після підтвердження.",
+                    plant.plant_type,
+                    plant.variety,
+                    plant.cell_col,
+                    plant.cell_row,
+                    confidence=confidence,
+                    reasons=reasons,
+                    reason_groups=reason_groups,
+                    recommendation_type="ipm_pest_monitoring",
+                    constraints=base_constraints[:3],
+                )
+                diag.tasks.append(task)
 
     def _generate_cold_stress_tasks(self, plant: PlantInstance, profile: CropProfile, diag: CellDiagnostics, w_today: WeatherSnapshot, w_forecast: list[WeatherSnapshot], today: date) -> None:
         frost_cooldown = self._in_cooldown(plant.last_frost_protection_at, today, _FROST_COOLDOWN_DAYS)

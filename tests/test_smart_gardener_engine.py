@@ -591,6 +591,77 @@ def test_fungicide_protection_uses_forecast_and_explains_factors():
     assert protection["reason_groups"].get("weather")
 
 
+def test_ipm_pest_protection_uses_common_pests_profile():
+    profile = {
+        **PROFILE,
+        "common_pests": [
+            {
+                "name": "Попелиця",
+                "likelihood": "high",
+                "symptoms": "скручене липке листя, колонії на молодих пагонах",
+                "treatment": "Огляд молодих пагонів, змивання водою або біоінсектицид; інсектицид тільки при масовому заселенні.",
+            }
+        ],
+        "treatment_guide": {
+            "pest_controls": ["Попелиця: перевірити нижній бік листка і молоді пагони, почати з м'яких IPM-заходів."],
+            "biological_controls": ["Підтримувати ентомофагів, не обробляти під час льоту бджіл."],
+        },
+    }
+
+    result = generate_analysis(
+        [{"col": 1, "row": 2, "plant_type": "РўРѕРјР°С‚", "planted_date": "2026-03-01", "category": "РћРІРѕС‡С–"}],
+        {"РўРѕРјР°С‚": profile},
+        today=date(2026, 4, 20),
+        weather_today=_weather(20, rain=0, humidity=62, temp_max=24, temp_min=15),
+        weather_history=[_weather(i, rain=0, humidity=60, temp_max=24, temp_min=15) for i in range(15, 20)],
+        weather_forecast=[_weather(21, rain=0, humidity=60, temp_max=24, temp_min=15)],
+        soil_type="loam",
+    )
+
+    pest_tasks = [task for task in result["tasks"] if task["task_type"] == "pest_control"]
+    assert pest_tasks
+    assert pest_tasks[0]["recommendation_type"] == "ipm_insecticide_intervention"
+    assert "Попелиця" in pest_tasks[0]["title"]
+    assert pest_tasks[0]["reason_groups"].get("protection")
+
+
+def test_ipm_pest_protection_is_hidden_during_hot_spray_window():
+    profile = {
+        **PROFILE,
+        "common_pests": [
+            {
+                "name": "Павутинний кліщ",
+                "likelihood": "high",
+                "symptoms": "жовті крапки на листі, тонка павутинка",
+                "treatment": "Підвищити вологість, змити колонії, за потреби застосувати дозволений акарицид ввечері.",
+            }
+        ],
+    }
+
+    result = generate_analysis(
+        [{"col": 1, "row": 2, "plant_type": "РўРѕРјР°С‚", "planted_date": "2026-03-01", "category": "РћРІРѕС‡С–"}],
+        {"РўРѕРјР°С‚": profile},
+        today=date(2026, 4, 20),
+        weather_today=_weather(20, rain=0, humidity=42, temp_max=32, temp_min=20),
+        weather_history=[_weather(i, rain=0, humidity=42, temp_max=31, temp_min=20) for i in range(15, 20)],
+        weather_forecast=[_weather(21, rain=0, humidity=40, temp_max=33, temp_min=20)],
+        soil_type="loam",
+        manual_observations=[
+            {
+                "scope": "plot",
+                "symptoms": ["павутинний кліщ", "павутинка на листі"],
+                "observed_at": "2026-04-20T08:00:00+00:00",
+            }
+        ],
+    )
+
+    hidden = [task for task in result["hidden_tasks"] if task["task_type"] == "pest_control"]
+    assert hidden
+    assert "відкласти" in hidden[0]["title"]
+    assert "спека" in " ".join(hidden[0]["constraints"])
+    assert hidden[0]["blocked_reasons"]
+
+
 def test_engine_handles_empty_weather_context_without_crashing():
     tasks = generate_tasks(
         [{"col": 1, "row": 2, "plant_type": "Томат", "planted_date": "2026-04-01", "category": "Овочі"}],
