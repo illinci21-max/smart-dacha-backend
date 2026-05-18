@@ -125,6 +125,7 @@ class CropProfile:
     avoid_spray_before_rain_hours: int = 6
     cold_stress_threshold_c: float | None = None
     frost_critical_threshold_c: float | None = None
+    common_diseases: list[dict] = field(default_factory=list)
     common_pests: list[dict] = field(default_factory=list)
     treatment_guide: dict = field(default_factory=dict)
     profile_confidence: int = 80
@@ -783,6 +784,7 @@ def crop_profile_from_backend(name: str, category: str | None, data: dict | None
             if data.get("frost_critical_threshold_c") is None
             else _to_float(data.get("frost_critical_threshold_c"), _to_float(data.get("frost_tolerance"), 0))
         ),
+        common_diseases=(data.get("common_diseases") if isinstance(data.get("common_diseases"), list) else []),
         common_pests=(data.get("common_pests") if isinstance(data.get("common_pests"), list) else []),
         treatment_guide=(data.get("treatment_guide") if isinstance(data.get("treatment_guide"), dict) else {}),
         profile_confidence=_to_int(data.get("profile_confidence") or data.get("confidence"), 80),
@@ -1381,6 +1383,29 @@ class SmartGardenerEngine:
             if profile.validation_warnings:
                 task.reasons.append("\u041f\u0440\u043e\u0444\u0456\u043b\u044c \u043a\u0443\u043b\u044c\u0442\u0443\u0440\u0438 \u043c\u0430\u0454 \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u043d\u0456 \u043a\u043e\u0440\u0435\u043a\u0446\u0456\u0457 \u0442\u0430 \u043f\u043e\u0442\u0440\u0435\u0431\u0443\u0454 \u043f\u0435\u0440\u0435\u0432\u0456\u0440\u043a\u0438")
 
+    @staticmethod
+    def _is_tree_phytophthora_context(profile: CropProfile) -> bool:
+        haystack = f"{profile.name} {profile.category}".lower()
+        tree_terms = (
+            "ябл", "apple", "pear", "груш", "айв", "quince", "слив", "plum",
+            "виш", "череш", "cherry", "перс", "peach", "абрик", "apricot",
+            "плодов", "зернят", "кісточк", "fruit", "tree", "сад",
+        )
+        disease_terms = " ".join(
+            str(item.get("name", "")) if isinstance(item, dict) else str(item)
+            for item in profile.common_diseases
+        ).lower()
+        return any(term in haystack for term in tree_terms) or (
+            "phytophthora" in disease_terms
+            and any(term in disease_terms for term in ("корен", "шийк", "crown", "root", "collar"))
+        )
+
+    @staticmethod
+    def _disease_display_name(disease: str, profile: CropProfile) -> str:
+        if disease == "late_blight" and SmartGardenerEngine._is_tree_phytophthora_context(profile):
+            return "Фітофторозна гниль кореневої шийки/коренів"
+        return _DISEASE_NAMES.get(disease, disease)
+
     def _assess_disease_risks(
         self,
         profile: CropProfile,
@@ -1528,6 +1553,9 @@ class SmartGardenerEngine:
         soil: SoilProfile,
         inoculum_pressure: float,
     ) -> DiseaseRisk | None:
+        if self._is_tree_phytophthora_context(profile):
+            return self._evaluate_tree_phytophthora_model(model, profile, risk_window, upcoming, phase, soil, inoculum_pressure)
+
         susceptibility = profile.susceptibility.get(model.disease, model.default_susceptibility)
         wetness_required = model.min_leaf_wetness_hours or 11
         infection_days = 0
@@ -1619,6 +1647,91 @@ class SmartGardenerEngine:
             model.recommendation,
             factors=factors,
             matched_days=infection_days,
+            window_days=len(risk_window),
+            model_confidence=_confidence(confidence),
+        )
+
+    def _evaluate_tree_phytophthora_model(
+        self,
+        model: DiseaseRiskModel,
+        profile: CropProfile,
+        risk_window: list[WeatherSnapshot],
+        upcoming: list[WeatherSnapshot],
+        phase: GrowthPhase,
+        soil: SoilProfile,
+        inoculum_pressure: float,
+    ) -> DiseaseRisk | None:
+        susceptibility = profile.susceptibility.get(model.disease, max(model.default_susceptibility, 0.45))
+        wet_days = sum(1 for weather in risk_window if weather.precipitation_mm >= 2 or weather.humidity_avg >= 85)
+        heavy_rain_days = sum(1 for weather in risk_window if weather.precipitation_mm >= 10)
+        saturated_days = sum(1 for weather in risk_window if weather.precipitation_mm >= 5 or weather.humidity_avg >= 90)
+        mild_root_temp_days = sum(1 for weather in risk_window if 8 <= weather.temp_mean <= 24)
+        upcoming_wet = sum(1 for weather in upcoming if weather.precipitation_mm >= 3 or weather.humidity_avg >= 85)
+        waterlogging = max(0.0, min(1.0, soil.waterlogging_risk))
+        drainage_factor = max(0.0, min(1.0, (soil.disease_risk_multiplier - 0.7) / 0.8))
+
+        wet_score = min(1.0, wet_days / max(4, len(risk_window) * 0.55))
+        saturated_score = min(1.0, saturated_days / max(3, len(risk_window) * 0.40))
+        temp_score = min(1.0, mild_root_temp_days / max(4, len(risk_window) * 0.55))
+        rain_score = min(1.0, heavy_rain_days / 2.0)
+        forecast_score = min(1.0, upcoming_wet / 2.0)
+        risk = (
+            wet_score * 0.22
+            + saturated_score * 0.20
+            + temp_score * 0.12
+            + rain_score * 0.12
+            + waterlogging * 0.18
+            + drainage_factor * 0.10
+            + forecast_score * 0.06
+        ) * max(0.45, susceptibility)
+        if inoculum_pressure > 0:
+            risk += model.infection_pressure_carryover * inoculum_pressure
+        risk = min(1.0, risk)
+        if risk <= 0.16:
+            return None
+
+        factors = [
+            "Модель: Phytophthora crown/root rot для плодових дерев",
+            f"Вологі/росисті дні: {wet_days}/{len(risk_window)}",
+            f"Дні з ризиком перезволоження кореневої зони: {saturated_days}/{len(risk_window)}",
+            f"Сильні опади: {heavy_rain_days}/{len(risk_window)}",
+            f"Температура кореневої зони в активному діапазоні 8-24°C: {mild_root_temp_days}/{len(risk_window)}",
+            f"Ризик застою води за типом ґрунту: {waterlogging * 100:.0f}%",
+            f"Коефіцієнт ґрунту для хвороб: {soil.disease_risk_multiplier:.2f}",
+            "Ключова перевірка: коренева шийка, підщепа і кора біля землі, а не тільки листя",
+            "Ключовий контроль: відвести воду, відкрити кореневу шийку і не мульчувати впритул до кори",
+        ]
+        if upcoming_wet:
+            factors.append(f"У прогнозі ще {upcoming_wet} вологі дні, ризик не знято")
+        if inoculum_pressure > 0:
+            factors.append(f"Інокулюм після спостережених симптомів: +{model.infection_pressure_carryover * inoculum_pressure * 100:.0f}% до ризику")
+
+        description = (
+            "Ризик фітофторозної гнилі кореневої шийки/коренів яблуні: "
+            f"волога коренева зона {saturated_days}/{len(risk_window)} дн., "
+            f"ризик застою води {waterlogging * 100:.0f}%. "
+            "Це не листкова фітофтора томата; потрібна перевірка кореневої шийки, дренаж і тільки дозволені препарати проти ооміцетів."
+        )
+        recommendation = (
+            "Рекомендація: відгребіть ґрунт від кореневої шийки на 10-15 см, перевірте кору біля землі, відведіть воду. "
+            "За підтвердження Phytophthora використовуйте лише дозволені для плодових/зерняткових препарати проти ооміцетів: фосетил-Al, фосфіти/фосфонати або мефеноксам/металаксил-М за етикеткою. "
+            "Мідь, бордоська суміш, Хорус, Скор і Топаз не є базовим рішенням для кореневої Phytophthora."
+        )
+        confidence = 76 + min(10, wet_days) + min(5, heavy_rain_days * 2)
+        if soil.waterlogging_risk >= 0.45:
+            confidence += 5
+        if len(risk_window) >= 10:
+            confidence += 4
+        if profile.profile_confidence < 70:
+            confidence -= 6
+        return DiseaseRisk(
+            model.disease,
+            _round(risk, 2),
+            _risk_to_priority(risk),
+            description,
+            recommendation,
+            factors=factors,
+            matched_days=saturated_days,
             window_days=len(risk_window),
             model_confidence=_confidence(confidence),
         )
@@ -3004,7 +3117,13 @@ class SmartGardenerEngine:
         v = f" ({plant.variety})" if plant.variety else ""
         for risk in diag.disease_risks:
             if risk.is_significant:
-                protection = recommend_protection(risk.disease, risk.risk_level)
+                disease_name = self._disease_display_name(risk.disease, diag.profile)
+                protection = recommend_protection(
+                    risk.disease,
+                    risk.risk_level,
+                    crop_name=diag.profile.name,
+                    crop_category=diag.profile.category,
+                )
                 product = protection.profile
                 max_spray_temp = min(
                     float(getattr(product, "max_temp_c", diag.profile.max_spray_temp_c) or diag.profile.max_spray_temp_c),
@@ -3029,7 +3148,7 @@ class SmartGardenerEngine:
                 reasons = [
                     risk.description.rstrip("."),
                     f"\u0420\u0438\u0437\u0438\u043a: {risk.risk_level * 100:.0f}%",
-                    f"\u041c\u043e\u0434\u0435\u043b\u044c \u0445\u0432\u043e\u0440\u043e\u0431\u0438: {_DISEASE_NAMES.get(risk.disease, risk.disease)}, \u0456\u043d\u0444\u0435\u043a\u0446\u0456\u0439\u043d\u0435 \u0432\u0456\u043a\u043d\u043e {risk.matched_days}/{risk.window_days} \u0434\u043d\u0456\u0432",
+                    f"\u041c\u043e\u0434\u0435\u043b\u044c \u0445\u0432\u043e\u0440\u043e\u0431\u0438: {disease_name}, \u0456\u043d\u0444\u0435\u043a\u0446\u0456\u0439\u043d\u0435 \u0432\u0456\u043a\u043d\u043e {risk.matched_days}/{risk.window_days} \u0434\u043d\u0456\u0432",
                     f"\u041f\u043e\u0432\u043d\u043e\u0442\u0430 \u0434\u0430\u043d\u0438\u0445: \u0456\u0441\u0442\u043e\u0440\u0456\u044f {min(len(w_history), 7)}/7 \u0434\u043d\u0456\u0432, \u043f\u0440\u043e\u0433\u043d\u043e\u0437 {min(len(w_forecast), 3)}/3 \u0434\u043d\u0456",
                     *risk.factors,
                     *protection.reasons,
@@ -3084,7 +3203,7 @@ class SmartGardenerEngine:
                 task = GardenTask(
                     TaskType.DISEASE_PROTECTION,
                     risk.priority,
-                    f"\u0424\u0443\u043d\u0433\u0456\u0446\u0438\u0434\u043d\u0438\u0439 \u0437\u0430\u0445\u0438\u0441\u0442: {_DISEASE_NAMES.get(risk.disease, risk.disease)} \u2014 {plant.plant_type}{v}",
+                    f"\u0424\u0443\u043d\u0433\u0456\u0446\u0438\u0434\u043d\u0438\u0439 \u0437\u0430\u0445\u0438\u0441\u0442: {disease_name} \u2014 {plant.plant_type}{v}",
                     f"{risk.description} {risk.recommendation} {protection.explanation}",
                     plant.plant_type,
                     plant.variety,
@@ -3098,23 +3217,23 @@ class SmartGardenerEngine:
                 )
                 if harvest_in <= phi_days:
                     task.is_hidden = True
-                    task.title = f"\u0417\u0430\u0445\u0438\u0441\u0442 \u0432\u0456\u0434\u043a\u043b\u0430\u0441\u0442\u0438: {_DISEASE_NAMES.get(risk.disease, risk.disease)} \u2014 {plant.plant_type}{v}"
+                    task.title = f"\u0417\u0430\u0445\u0438\u0441\u0442 \u0432\u0456\u0434\u043a\u043b\u0430\u0441\u0442\u0438: {disease_name} \u2014 {plant.plant_type}{v}"
                     task.blocked_reasons = [f"\u0414\u043e \u0437\u0431\u043e\u0440\u0443 \u0432\u0440\u043e\u0436\u0430\u044e {_safe_date_label(harvest_in)}, \u0430 pre-harvest interval \u0434\u043b\u044f \u0446\u044c\u043e\u0433\u043e \u0437\u0430\u0445\u0438\u0441\u0442\u0443 {phi_days} \u0434\u043d\u0456\u0432"]
                     diag.hidden_tasks.append(task)
                 elif resistance_blockers:
                     task.is_hidden = True
-                    task.title = f"\u0417\u0430\u0445\u0438\u0441\u0442 \u0432\u0456\u0434\u043a\u043b\u0430\u0441\u0442\u0438: {_DISEASE_NAMES.get(risk.disease, risk.disease)} \u2014 {plant.plant_type}{v}"
+                    task.title = f"\u0417\u0430\u0445\u0438\u0441\u0442 \u0432\u0456\u0434\u043a\u043b\u0430\u0441\u0442\u0438: {disease_name} \u2014 {plant.plant_type}{v}"
                     task.blocked_reasons = resistance_blockers
                     task.constraints = [*constraints, *resistance_blockers]
                     diag.hidden_tasks.append(task)
                 elif timing_blockers:
                     task.is_hidden = True
-                    task.title = f"\u0417\u0430\u0445\u0438\u0441\u0442 \u0432\u0456\u0434\u043a\u043b\u0430\u0441\u0442\u0438: {_DISEASE_NAMES.get(risk.disease, risk.disease)} \u2014 {plant.plant_type}{v}"
+                    task.title = f"\u0417\u0430\u0445\u0438\u0441\u0442 \u0432\u0456\u0434\u043a\u043b\u0430\u0441\u0442\u0438: {disease_name} \u2014 {plant.plant_type}{v}"
                     task.blocked_reasons = timing_blockers
                     diag.hidden_tasks.append(task)
                 elif blockers:
                     task.is_hidden = True
-                    task.title = f"\u0417\u0430\u0445\u0438\u0441\u0442 \u0432\u0456\u0434\u043a\u043b\u0430\u0441\u0442\u0438: {_DISEASE_NAMES.get(risk.disease, risk.disease)} \u2014 {plant.plant_type}{v}"
+                    task.title = f"\u0417\u0430\u0445\u0438\u0441\u0442 \u0432\u0456\u0434\u043a\u043b\u0430\u0441\u0442\u0438: {disease_name} \u2014 {plant.plant_type}{v}"
                     task.blocked_reasons = blocked_messages
                     diag.hidden_tasks.append(task)
                 else:

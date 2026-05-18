@@ -1089,11 +1089,53 @@ def test_protection_profile_recommendation_uses_disease_and_risk():
     low = recommend_protection("late_blight", 0.45)
     high = recommend_protection("late_blight", 0.85)
     mildew = recommend_protection("powdery_mildew", 0.55)
+    apple = recommend_protection("late_blight", 0.85, crop_name="Яблуня", crop_category="Плодові")
 
     assert low.profile.frac_group == "M01"
     assert high.profile.protection_type == "системний фунгіцид"
     assert high.profile.pre_harvest_interval_days > low.profile.pre_harvest_interval_days
     assert mildew.profile.id == "sulfur_contact"
+    assert apple.profile.id == "tree_phytophthora_phosphonate"
+
+
+def test_apple_phytophthora_uses_tree_root_crown_rot_model():
+    apple_profile = {
+        **PROFILE,
+        "category": "Плодові",
+        "sus_late_blight": 0.9,
+        "common_diseases": [
+            {
+                "name": "фітофторозна гниль кореневої шийки/коренів",
+                "type": "oomycete",
+                "likelihood": "high",
+                "symptoms": ["темна кора біля кореневої шийки", "слабкий ріст"],
+                "risk_conditions": ["застій води", "важкий ґрунт"],
+                "treatment": ["дренаж", "фосфіти або фосетил-Al за етикеткою"],
+            }
+        ],
+    }
+
+    result = generate_analysis(
+        [{"col": 1, "row": 2, "plant_type": "Яблуня", "planted_date": "2024-03-01", "category": "Плодові"}],
+        {"Яблуня": apple_profile},
+        today=date(2026, 4, 20),
+        weather_today=_weather(20, rain=12, humidity=90, temp_max=18, temp_min=9),
+        weather_history=[_weather(i, rain=8, humidity=88, temp_max=17, temp_min=8) for i in range(13, 20)],
+        weather_forecast=[
+            _weather(21, rain=6, humidity=88, temp_max=18, temp_min=9),
+            _weather(22, rain=4, humidity=86, temp_max=19, temp_min=10),
+            _weather(23, rain=0, humidity=72, temp_max=20, temp_min=11),
+        ],
+        soil_type="clay",
+    )
+
+    protection = next(t for t in result["tasks"] + result["hidden_tasks"] if t["task_type"] == "disease_protection")
+    text = " ".join([protection["title"], protection["description"], *protection["reasons"], *protection["constraints"]])
+    assert "коренев" in text.lower()
+    assert "фосф" in text.lower()
+    assert "мідь" in text.lower()
+    assert "NegFry" not in text
+    assert "Smith Periods" not in text
 
 
 def test_disease_task_contains_protection_profile_metadata():

@@ -110,6 +110,27 @@ PROTECTION_PROFILES: dict[str, ProtectionProfile] = {
         preventive=True,
         curative=True,
     ),
+    "tree_phytophthora_phosphonate": ProtectionProfile(
+        id="tree_phytophthora_phosphonate",
+        label="Фосфіти / фосетил-Al проти Phytophthora кореневої шийки",
+        protection_type="системний захист від ооміцетів для плодових",
+        target_diseases=["late_blight", "phytophthora_crown_rot", "phytophthora_root_rot"],
+        frac_group="P07",
+        mode_of_action="фосфонати / фосетил-Al, системна дія та індукція захисту",
+        reentry_days=1,
+        pre_harvest_interval_days=14,
+        rainfast_hours=3,
+        max_applications_per_season=3,
+        min_interval_days=14,
+        preventive=True,
+        curative=True,
+        notes=[
+            "Для яблуні Phytophthora зазвичай означає гниль кореневої шийки, підщепи або коренів, а не листкову фітофтору томата.",
+            "Перший захід — відвести воду, відкрити й підсушити кореневу шийку; фунгіцид без дренажу проблему не вирішить.",
+            "Шукайте етикетку з плодовими/зернятковими культурами та Phytophthora/collar rot/root rot; доречні класи: фосетил-Al, фосфіти/фосфонати, мефеноксам/металаксил-М за дозволом.",
+            "Мідь, бордоська суміш, Хорус, Скор, Топаз не є базовим рішенням для кореневої Phytophthora яблуні.",
+        ],
+    ),
     "azoxystrobin_qoi": ProtectionProfile(
         id="azoxystrobin_qoi",
         label="\u0410\u0437\u043e\u043a\u0441\u0438\u0441\u0442\u0440\u043e\u0431\u0456\u043d",
@@ -270,9 +291,26 @@ def list_protection_profile_dicts() -> list[dict]:
     return [profile.to_dict() for profile in list_protection_profiles()]
 
 
-def recommend_protection(disease: str, risk_level: float) -> ProtectionRecommendation:
+def _is_tree_phytophthora_context(crop_name: str | None = None, crop_category: str | None = None) -> bool:
+    haystack = f"{crop_name or ''} {crop_category or ''}".lower()
+    tree_terms = (
+        "ябл", "apple", "pear", "груш", "айв", "quince", "слив", "plum",
+        "виш", "череш", "cherry", "перс", "peach", "абрик", "apricot",
+        "плодов", "зернят", "кісточк", "fruit", "tree", "сад",
+    )
+    return any(term in haystack for term in tree_terms)
+
+
+def recommend_protection(
+    disease: str,
+    risk_level: float,
+    crop_name: str | None = None,
+    crop_category: str | None = None,
+) -> ProtectionRecommendation:
     if disease in {"late_blight", "downy_mildew"}:
-        if risk_level >= 0.75:
+        if disease == "late_blight" and _is_tree_phytophthora_context(crop_name, crop_category):
+            profile_id = "tree_phytophthora_phosphonate"
+        elif risk_level >= 0.75:
             profile_id = "systemic_oomycete"
         elif risk_level >= 0.5:
             profile_id = "mancozeb_contact"
