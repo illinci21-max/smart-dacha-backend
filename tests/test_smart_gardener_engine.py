@@ -568,9 +568,17 @@ def test_fertilizing_uses_weather_window_and_leaching_factors():
 
 
 def test_fungicide_protection_uses_forecast_and_explains_factors():
+    profile = {
+        **PROFILE,
+        "sus_late_blight": 0.95,
+        "treatment_guide": {
+            "biological_controls": ["Bacillus subtilis / Trichoderma — Фітоспорин, Триходермін або аналоги."],
+            "chemical_controls": ["Манкоцеб або металаксил-М + манкоцеб — Ридоміл Голд, Акробат або аналоги за етикеткою."],
+        },
+    }
     tasks = generate_tasks(
         [{"col": 1, "row": 2, "plant_type": "Томат", "planted_date": "2026-03-01", "category": "Овочі"}],
-        {"Томат": {**PROFILE, "sus_late_blight": 0.95}},
+        {"Томат": profile},
         today=date(2026, 4, 20),
         weather_today=_weather(20, rain=2, humidity=88, temp_max=22, temp_min=14),
         weather_history=[
@@ -589,6 +597,9 @@ def test_fungicide_protection_uses_forecast_and_explains_factors():
     assert protection["confidence"] >= 80
     assert protection["title"].startswith("Фунгіцидний захист")
     assert protection["reason_groups"].get("weather")
+    protection_text = " ".join(protection["reason_groups"].get("protection", []))
+    assert "Біологічні:" in protection_text
+    assert "Хімічні:" in protection_text
 
 
 def test_ipm_pest_protection_uses_common_pests_profile():
@@ -604,7 +615,8 @@ def test_ipm_pest_protection_uses_common_pests_profile():
         ],
         "treatment_guide": {
             "pest_controls": ["Попелиця: перевірити нижній бік листка і молоді пагони, почати з м'яких IPM-заходів."],
-            "biological_controls": ["Підтримувати ентомофагів, не обробляти під час льоту бджіл."],
+            "biological_controls": ["Bacillus thuringiensis або ентомофаги — біоінсектицид/корисні комахи за етикеткою."],
+            "chemical_controls": ["Ацетаміприд або спіротетрамат — Моспілан, Мовенто або аналоги за діючою речовиною."],
         },
     }
 
@@ -623,6 +635,9 @@ def test_ipm_pest_protection_uses_common_pests_profile():
     assert pest_tasks[0]["recommendation_type"] == "ipm_insecticide_intervention"
     assert "Попелиця" in pest_tasks[0]["title"]
     assert pest_tasks[0]["reason_groups"].get("protection")
+    protection_text = " ".join(pest_tasks[0]["reason_groups"]["protection"])
+    assert "Біологічні:" in protection_text
+    assert "Хімічні:" in protection_text
 
 
 def test_soil_pests_do_not_use_leaf_inspection_template():

@@ -1986,15 +1986,54 @@ class SmartGardenerEngine:
     @staticmethod
     def _pest_guide_lines(profile: CropProfile, pest_name: str) -> list[str]:
         guide = profile.treatment_guide if isinstance(profile.treatment_guide, dict) else {}
-        lines: list[str] = []
-        for key in ("pest_controls", "biological_controls", "organic_options", "safety_notes"):
+        pest_lines = SmartGardenerEngine._treatment_guide_lines(guide, ("pest_controls",), pest_name=pest_name)
+        general_lines = SmartGardenerEngine._treatment_guide_lines(
+            guide,
+            ("biological_controls", "chemical_controls", "organic_options", "safety_notes"),
+        )
+        return [*pest_lines, *general_lines][:8]
+
+    @staticmethod
+    def _protection_guide_lines(profile: CropProfile, disease_name: str) -> list[str]:
+        guide = profile.treatment_guide if isinstance(profile.treatment_guide, dict) else {}
+        return SmartGardenerEngine._treatment_guide_lines(
+            guide,
+            ("biological_controls", "chemical_controls", "copper_controls", "safety_notes"),
+            pest_name=disease_name,
+        )[:8]
+
+    @staticmethod
+    def _treatment_guide_lines(
+        guide: dict,
+        keys: tuple[str, ...],
+        pest_name: str | None = None,
+    ) -> list[str]:
+        labels = {
+            "pest_controls": "IPM",
+            "biological_controls": "Біологічні",
+            "chemical_controls": "Хімічні",
+            "copper_controls": "Мідьвмісні",
+            "organic_options": "Органічні",
+            "safety_notes": "Безпека",
+        }
+        exact: list[str] = []
+        general: list[str] = []
+        needle = (pest_name or "").lower()
+        for key in keys:
             value = guide.get(key)
+            raw_items: list[str] = []
             if isinstance(value, list):
-                lines.extend(str(item) for item in value[:3] if str(item).strip())
+                raw_items.extend(str(item) for item in value[:4] if str(item).strip())
             elif isinstance(value, str) and value.strip():
-                lines.append(value.strip())
-        exact = [line for line in lines if pest_name.lower() in line.lower()]
-        return (exact or lines)[:4]
+                raw_items.append(value.strip())
+            label = labels.get(key, key)
+            for item in raw_items:
+                line = f"{label}: {item}"
+                if needle and needle in item.lower():
+                    exact.append(line)
+                else:
+                    general.append(line)
+        return [*exact, *general]
 
     @staticmethod
     def _is_soil_dwelling_pest(risk: PestRisk) -> bool:
@@ -3184,6 +3223,7 @@ class SmartGardenerEngine:
                     crop_category=diag.profile.category,
                 )
                 product = protection.profile
+                guide_lines = self._protection_guide_lines(diag.profile, disease_name)
                 max_spray_temp = min(
                     float(getattr(product, "max_temp_c", diag.profile.max_spray_temp_c) or diag.profile.max_spray_temp_c),
                     diag.profile.max_spray_temp_c,
@@ -3211,6 +3251,7 @@ class SmartGardenerEngine:
                     f"\u041f\u043e\u0432\u043d\u043e\u0442\u0430 \u0434\u0430\u043d\u0438\u0445: \u0456\u0441\u0442\u043e\u0440\u0456\u044f {min(len(w_history), 7)}/7 \u0434\u043d\u0456\u0432, \u043f\u0440\u043e\u0433\u043d\u043e\u0437 {min(len(w_forecast), 3)}/3 \u0434\u043d\u0456",
                     *risk.factors,
                     *protection.reasons,
+                    *guide_lines,
                 ]
                 if self._is_biological_protection(product) and plant.age_days < diag.profile.disease_protection_adaptation_days:
                     reasons.append("\u0411\u0456\u043e\u0444\u0443\u043d\u0433\u0456\u0446\u0438\u0434\u0438 \u043c\u043e\u0436\u043d\u0430 \u0437\u0430\u0441\u0442\u043e\u0441\u043e\u0432\u0443\u0432\u0430\u0442\u0438 \u043c\u0430\u0439\u0436\u0435 \u043e\u0434\u0440\u0430\u0437\u0443 \u043f\u0456\u0441\u043b\u044f \u0432\u0438\u0441\u0430\u0434\u043a\u0438")
@@ -3231,7 +3272,10 @@ class SmartGardenerEngine:
                 _append_group(reason_groups, "weather", risk.description.rstrip("."))
                 for factor in risk.factors:
                     _append_group(reason_groups, "weather", factor)
+                _append_group(reason_groups, "protection", f"Обраний варіант: {product.label} ({product.protection_type}, FRAC {product.frac_group})")
                 _append_group(reason_groups, "protection", protection.explanation)
+                for line in guide_lines:
+                    _append_group(reason_groups, "protection", line)
                 constraints = [
                     *blockers,
                     *timing_blockers,
