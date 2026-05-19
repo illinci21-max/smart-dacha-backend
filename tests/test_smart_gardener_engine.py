@@ -625,6 +625,42 @@ def test_ipm_pest_protection_uses_common_pests_profile():
     assert pest_tasks[0]["reason_groups"].get("protection")
 
 
+def test_soil_pests_do_not_use_leaf_inspection_template():
+    profile = {
+        **PROFILE,
+        "common_pests": [
+            {
+                "name": "Дротяник",
+                "likelihood": "high",
+                "symptoms": "пошкоджені корені, ходи в бульбах, рослина в'яне без листкових плям",
+                "treatment": "Перевірити ґрунт і кореневу зону, використати приманкові пастки; інсектицид лише після підтвердження.",
+            }
+        ],
+    }
+
+    result = generate_analysis(
+        [{"col": 1, "row": 2, "plant_type": "Картопля", "planted_date": "2026-04-01", "category": "Овочі"}],
+        {"Картопля": profile},
+        today=date(2026, 4, 20),
+        weather_today=_weather(20, rain=1, humidity=68, temp_max=23, temp_min=14),
+        weather_history=[_weather(i, rain=1, humidity=68, temp_max=23, temp_min=14) for i in range(15, 20)],
+        weather_forecast=[_weather(21, rain=1, humidity=68, temp_max=24, temp_min=15)],
+        soil_type="loam",
+    )
+
+    pest_task = next(task for task in result["tasks"] if task["task_type"] == "pest_control")
+    text = " ".join([
+        pest_task["description"],
+        *pest_task["constraints"],
+    ]).lower()
+
+    assert "дротяник" in pest_task["title"].lower()
+    assert "ґрунт" in text
+    assert "корен" in text
+    assert "10-20 лист" not in text
+    assert "нижній бік лист" not in text
+
+
 def test_ipm_pest_protection_is_hidden_during_hot_spray_window():
     profile = {
         **PROFILE,

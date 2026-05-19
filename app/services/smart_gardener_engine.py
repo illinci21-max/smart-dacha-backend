@@ -1997,6 +1997,65 @@ class SmartGardenerEngine:
         return (exact or lines)[:4]
 
     @staticmethod
+    def _is_soil_dwelling_pest(risk: PestRisk) -> bool:
+        text = " ".join(
+            [
+                risk.key,
+                risk.description,
+                risk.recommendation,
+                *risk.factors,
+            ]
+        ).lower()
+        return any(
+            term in text
+            for term in (
+                "дротяник",
+                "wireworm",
+                "хрущ",
+                "grub",
+                "капустян",
+                "mole cricket",
+                "нематод",
+                "nematode",
+                "корен",
+                "root",
+                "ґрунтов",
+                "грунтов",
+                "soil",
+            )
+        )
+
+    @staticmethod
+    def _pest_confirmation_constraint(risk: PestRisk) -> str:
+        if SmartGardenerEngine._is_soil_dwelling_pest(risk):
+            return (
+                "IPM: спочатку підтвердити ґрунтового шкідника оглядом кореневої зони, "
+                "верхніх 10-15 см ґрунту, пошкоджених коренів/бульб або приманкових пасток"
+            )
+        return "IPM: спочатку підтвердити шкідника оглядом нижнього боку листків, бутонів, пагонів і плодів"
+
+    @staticmethod
+    def _pest_confirmation_text(risk: PestRisk) -> str:
+        if SmartGardenerEngine._is_soil_dwelling_pest(risk):
+            return (
+                "Перед внесенням препарату підтвердіть ґрунтового шкідника: перевірте кореневу зону, "
+                "верхні 10-15 см ґрунту біля рослини, пошкоджені корені/бульби або приманкові пастки. "
+            )
+        return (
+            "Перед внесенням препарату підтвердіть шкідника: огляд 10-20 листків/бутонів, "
+            "нижній бік листка, молоді пагони й плоди. "
+        )
+
+    @staticmethod
+    def _pest_monitoring_text(risk: PestRisk) -> str:
+        if SmartGardenerEngine._is_soil_dwelling_pest(risk):
+            return (
+                "Поки достатньо огляду й профілактики: перевірте кореневу зону, ґрунтові грудки, "
+                "приманкові пастки та пошкодження коренів/бульб; втручайтесь лише після підтвердження."
+            )
+        return "Поки достатньо огляду й профілактики: перевірте рослини, пастки або нижній бік листків, і втручайтесь лише після підтвердження."
+
+    @staticmethod
     def _assess_nutrient_leaching(w_history: list[WeatherSnapshot], soil: SoilProfile) -> float:
         if len(w_history) < 3:
             return 0.0
@@ -3250,8 +3309,11 @@ class SmartGardenerEngine:
 
             guide_lines = self._pest_guide_lines(diag.profile, risk.name)
             count_90d = plant.protection_counts_90d.get(risk.key, 0) + plant.protection_counts_90d.get(risk.name, 0)
+            confirmation_constraint = self._pest_confirmation_constraint(risk)
+            confirmation_text = self._pest_confirmation_text(risk)
+            monitoring_text = self._pest_monitoring_text(risk)
             base_constraints = [
-                "IPM: спочатку підтвердити шкідника оглядом нижнього боку листків, бутонів, пагонів і плодів",
+                confirmation_constraint,
                 "Починати з механічних/біологічних заходів; хімічний інсектицид тільки після підтвердження шкідника і за етикеткою",
                 "Не обробляти під час активного льоту бджіл; безпечніше ввечері або рано-вранці",
                 "Дотримуватись норми внесення, строку очікування, ЗІЗ та обмежень для конкретного препарату",
@@ -3310,7 +3372,7 @@ class SmartGardenerEngine:
                 title = f"Інсектицидний/IPM-захист: {risk.name} — {plant.plant_type}{v}"
                 description = (
                     f"{risk.description} {risk.recommendation} "
-                    "Перед внесенням препарату підтвердіть шкідника: огляд 10-20 листків/бутонів, нижній бік листка, молоді пагони й плоди. "
+                    f"{confirmation_text}"
                     "Якщо заселення слабке — почніть з ручного видалення, біопрепаратів або м'яких засобів."
                 )
                 task = GardenTask(
@@ -3340,7 +3402,7 @@ class SmartGardenerEngine:
                     TaskType.PEST_CONTROL,
                     TaskPriority.MEDIUM,
                     f"Моніторинг шкідників: {risk.name} — {plant.plant_type}{v}",
-                    f"{risk.description} Поки достатньо огляду й профілактики: перевірте рослини, пастки або нижній бік листків, і втручайтесь лише після підтвердження.",
+                    f"{risk.description} {monitoring_text}",
                     plant.plant_type,
                     plant.variety,
                     plant.cell_col,
