@@ -1986,27 +1986,189 @@ class SmartGardenerEngine:
     @staticmethod
     def _pest_guide_lines(profile: CropProfile, pest_name: str) -> list[str]:
         guide = profile.treatment_guide if isinstance(profile.treatment_guide, dict) else {}
-        pest_lines = SmartGardenerEngine._treatment_guide_lines(guide, ("pest_controls",), pest_name=pest_name)
+        catalog_lines = SmartGardenerEngine._problem_catalog_lines(
+            profile.common_pests,
+            pest_name,
+            problem_label="Шкідник",
+        )
+        pest_lines = SmartGardenerEngine._treatment_guide_lines(
+            guide,
+            ("pest_controls",),
+            pest_name=pest_name,
+            profile=profile,
+            recommendation_kind="insecticide",
+        )
         general_lines = SmartGardenerEngine._treatment_guide_lines(
             guide,
             ("biological_controls", "chemical_controls", "organic_options", "safety_notes"),
+            profile=profile,
+            recommendation_kind="insecticide",
         )
-        return [*pest_lines, *general_lines][:8]
+        return SmartGardenerEngine._dedupe_lines([*catalog_lines, *pest_lines, *general_lines])[:8]
 
     @staticmethod
     def _protection_guide_lines(profile: CropProfile, disease_name: str) -> list[str]:
         guide = profile.treatment_guide if isinstance(profile.treatment_guide, dict) else {}
-        return SmartGardenerEngine._treatment_guide_lines(
+        catalog_lines = SmartGardenerEngine._problem_catalog_lines(
+            profile.common_diseases,
+            disease_name,
+            problem_label="Хвороба",
+        )
+        general_lines = SmartGardenerEngine._treatment_guide_lines(
             guide,
             ("biological_controls", "chemical_controls", "copper_controls", "safety_notes"),
             pest_name=disease_name,
-        )[:8]
+            profile=profile,
+            recommendation_kind="fungicide",
+        )
+        return SmartGardenerEngine._dedupe_lines([*catalog_lines, *general_lines])[:8]
+
+    @staticmethod
+    def _dedupe_lines(lines: list[str]) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for line in lines:
+            clean = " ".join(str(line).split())
+            key = clean.lower()
+            if clean and key not in seen:
+                result.append(clean)
+                seen.add(key)
+        return result
+
+    @staticmethod
+    def _problem_catalog_lines(items: list[dict], problem_name: str, problem_label: str) -> list[str]:
+        matched = SmartGardenerEngine._match_problem_item(items, problem_name)
+        if not matched:
+            return []
+
+        lines: list[str] = []
+        name = str(matched.get("name") or problem_name).strip()
+        treatment = SmartGardenerEngine._string_list(matched.get("treatment"))
+        prevention = SmartGardenerEngine._string_list(matched.get("prevention"))
+        notes = str(matched.get("notes") or "").strip()
+        for item in treatment[:3]:
+            lines.append(f"{problem_label} {name}: {item}")
+        for item in prevention[:2]:
+            lines.append(f"Профілактика для {name}: {item}")
+        if notes:
+            lines.append(f"Уточнення для {name}: {notes}")
+        return lines
+
+    @staticmethod
+    def _string_list(value: Any) -> list[str]:
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, str) and value.strip():
+            return [value.strip()]
+        return []
+
+    @staticmethod
+    def _match_problem_item(items: list[dict], problem_name: str) -> dict | None:
+        needle_tokens = SmartGardenerEngine._meaningful_tokens(problem_name)
+        best: tuple[int, dict] | None = None
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            haystack = " ".join(
+                [
+                    str(item.get("name") or ""),
+                    " ".join(SmartGardenerEngine._string_list(item.get("symptoms"))),
+                    " ".join(SmartGardenerEngine._string_list(item.get("treatment"))),
+                ]
+            )
+            hay_tokens = set(SmartGardenerEngine._meaningful_tokens(haystack))
+            score = len(set(needle_tokens) & hay_tokens)
+            item_name = str(item.get("name") or "").lower()
+            if problem_name and problem_name.lower() in item_name:
+                score += 3
+            if score and (best is None or score > best[0]):
+                best = (score, item)
+        return best[1] if best else None
+
+    @staticmethod
+    def _meaningful_tokens(text: str) -> list[str]:
+        normalized = (
+            str(text or "")
+            .lower()
+            .replace("/", " ")
+            .replace("-", " ")
+            .replace("—", " ")
+            .replace(",", " ")
+            .replace(".", " ")
+            .replace("(", " ")
+            .replace(")", " ")
+        )
+        stop = {
+            "для", "при", "або", "від", "проти", "та", "і", "на", "у", "в", "з",
+            "the", "and", "or", "rot", "root", "leaf",
+        }
+        return [token for token in normalized.split() if len(token) >= 4 and token not in stop]
+
+    @staticmethod
+    def _is_tree_crop(profile: CropProfile) -> bool:
+        text = f"{profile.name} {profile.category}".lower()
+        return any(
+            term in text
+            for term in (
+                "ябл", "груш", "айв", "слив", "виш", "череш", "перс", "абрик",
+                "плодов", "зернят", "кісточк", "fruit", "tree", "apple", "pear",
+                "cherry", "peach", "apricot", "plum",
+            )
+        )
+
+    @staticmethod
+    def _line_safe_for_profile(line: str, profile: CropProfile | None) -> bool:
+        if not profile:
+            return True
+        lower = line.lower()
+        if SmartGardenerEngine._is_tree_crop(profile) and any(
+            term in lower for term in ("квадріс", "quadris", "азоксистробін", "azoxystrobin")
+        ):
+            return False
+        return True
+
+    @staticmethod
+    def _line_matches_recommendation_kind(line: str, recommendation_kind: str | None) -> bool:
+        if not recommendation_kind:
+            return True
+        lower = line.lower()
+        fungicide_terms = (
+            "фунгіцид", "хвороб", "фітофтор", "мілдью", "борошнист", "гниль",
+            "плямист", "іржа", "парш", "мід", "манкоцеб", "фосетил", "фосфіт",
+            "металаксил", "мефеноксам", "дифеноконазол", "пропіконазол",
+            "азоксистробін", "trichoderma", "bacillus subtilis",
+            "fungicide", "disease", "blight", "mildew", "rot", "rust",
+            "mancozeb", "metalaxyl", "mefenoxam", "difenoconazole",
+            "propiconazole", "azoxystrobin",
+        )
+        insecticide_terms = (
+            "інсектицид", "акарицид", "шкідник", "попелиц", "кліщ", "жук",
+            "довгонос", "личин", "гусен", "муха", "галиц", "дрозофіл",
+            "дротян", "хрущ", "слимак", "нематод", "спіносад", "піретроїд",
+            "ацетаміприд", "імідаклоприд", "тіаметоксам", "абамектин",
+            "авермектин", "bacillus thuringiensis", "bt ",
+            "insecticide", "acaricide", "pest", "aphid", "mite", "beetle",
+            "weevil", "larva", "caterpillar", "fly", "wireworm", "grub",
+            "spinosad", "pyrethroid", "acetamiprid", "imidacloprid",
+            "thiamethoxam", "abamectin", "avermectin",
+        )
+        if recommendation_kind == "insecticide":
+            if any(term in lower for term in fungicide_terms) and not any(term in lower for term in insecticide_terms):
+                return False
+            return True
+        if recommendation_kind == "fungicide":
+            if any(term in lower for term in insecticide_terms) and not any(term in lower for term in fungicide_terms):
+                return False
+            return True
+        return True
 
     @staticmethod
     def _treatment_guide_lines(
         guide: dict,
         keys: tuple[str, ...],
         pest_name: str | None = None,
+        profile: CropProfile | None = None,
+        recommendation_kind: str | None = None,
     ) -> list[str]:
         labels = {
             "pest_controls": "IPM",
@@ -2029,6 +2191,10 @@ class SmartGardenerEngine:
             label = labels.get(key, key)
             for item in raw_items:
                 line = f"{label}: {item}"
+                if not SmartGardenerEngine._line_safe_for_profile(line, profile):
+                    continue
+                if not SmartGardenerEngine._line_matches_recommendation_kind(line, recommendation_kind):
+                    continue
                 if needle and needle in item.lower():
                     exact.append(line)
                 else:

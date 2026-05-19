@@ -786,6 +786,90 @@ def test_protection_catalog_has_commercial_profile_depth():
 
     assert recommend_protection("late_blight", 0.8).profile.id == "systemic_oomycete"
     assert recommend_protection("powdery_mildew", 0.8).profile.id == "azoxystrobin_qoi"
+    assert recommend_protection("powdery_mildew", 0.8, crop_name="Apple", crop_category="Fruit trees").profile.id != "azoxystrobin_qoi"
+    assert recommend_protection("alternaria", 0.8, crop_name="Apple", crop_category="Fruit trees").profile.id != "azoxystrobin_qoi"
+
+
+def test_ipm_pest_protection_filters_out_fungicide_guidance():
+    profile = {
+        **PROFILE,
+        "common_pests": [
+            {
+                "name": "Aphid",
+                "likelihood": "high",
+                "symptoms": "sticky curled leaves and colonies on young shoots",
+                "treatment": "Confirm colonies first; use insecticidal soap, beneficial insects, or acetamiprid only after threshold.",
+            }
+        ],
+        "treatment_guide": {
+            "pest_controls": ["Aphid: inspect young shoots and underside of leaves."],
+            "biological_controls": [
+                "Bacillus subtilis fungicide for leaf disease",
+                "Beneficial insects against aphids",
+            ],
+            "chemical_controls": [
+                "Mancozeb fungicide for late blight",
+                "Acetamiprid insecticide for aphids",
+            ],
+        },
+    }
+
+    result = generate_analysis(
+        [{"col": 1, "row": 2, "plant_type": "Tomato", "planted_date": "2026-03-01", "category": "Vegetables"}],
+        {"Tomato": profile},
+        today=date(2026, 4, 20),
+        weather_today=_weather(20, rain=0, humidity=62, temp_max=24, temp_min=15),
+        weather_history=[_weather(i, rain=0, humidity=60, temp_max=24, temp_min=15) for i in range(15, 20)],
+        weather_forecast=[_weather(21, rain=0, humidity=60, temp_max=24, temp_min=15)],
+        soil_type="loam",
+    )
+
+    pest_task = next(task for task in result["tasks"] if task["task_type"] == "pest_control")
+    protection_text = " ".join(pest_task["reason_groups"]["protection"])
+    assert "Acetamiprid insecticide" in protection_text
+    assert "Mancozeb fungicide" not in protection_text
+    assert "Bacillus subtilis fungicide" not in protection_text
+
+
+def test_fungicide_protection_filters_out_insecticide_guidance():
+    profile = {
+        **PROFILE,
+        "sus_late_blight": 0.95,
+        "common_diseases": [
+            {
+                "name": "Late blight",
+                "likelihood": "high",
+                "symptoms": ["wet dark leaf spots"],
+                "treatment": ["Use mancozeb fungicide or metalaxyl-M mixture according to label."],
+            }
+        ],
+        "treatment_guide": {
+            "biological_controls": ["Bacillus subtilis fungicide for leaf disease"],
+            "chemical_controls": [
+                "Acetamiprid insecticide for aphids",
+                "Mancozeb fungicide for late blight",
+            ],
+        },
+    }
+
+    tasks = generate_tasks(
+        [{"col": 1, "row": 2, "plant_type": "Tomato", "planted_date": "2026-03-01", "category": "Vegetables"}],
+        {"Tomato": profile},
+        today=date(2026, 4, 20),
+        weather_today=_weather(20, rain=2, humidity=88, temp_max=22, temp_min=14),
+        weather_history=[_weather(i, rain=2, humidity=86, temp_max=22, temp_min=14) for i in range(13, 20)],
+        weather_forecast=[
+            _weather(21, rain=3, humidity=90, temp_max=21, temp_min=13),
+            _weather(22, rain=2, humidity=88, temp_max=20, temp_min=12),
+            _weather(23, rain=0, humidity=82, temp_max=22, temp_min=14),
+        ],
+        soil_type="clay",
+    )
+
+    protection = next(task for task in tasks if task["task_type"] == "disease_protection")
+    protection_text = " ".join(protection["reason_groups"]["protection"])
+    assert "Mancozeb fungicide" in protection_text
+    assert "Acetamiprid insecticide" not in protection_text
 
 
 def test_initial_soil_fertility_can_cover_start_fertilizing_need():

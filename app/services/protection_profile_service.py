@@ -307,8 +307,9 @@ def recommend_protection(
     crop_name: str | None = None,
     crop_category: str | None = None,
 ) -> ProtectionRecommendation:
+    is_tree_crop = _is_tree_phytophthora_context(crop_name, crop_category)
     if disease in {"late_blight", "downy_mildew"}:
-        if disease == "late_blight" and _is_tree_phytophthora_context(crop_name, crop_category):
+        if disease == "late_blight" and is_tree_crop:
             profile_id = "tree_phytophthora_phosphonate"
         elif risk_level >= 0.75:
             profile_id = "systemic_oomycete"
@@ -317,7 +318,9 @@ def recommend_protection(
         else:
             profile_id = "contact_copper"
     elif disease == "powdery_mildew":
-        if risk_level >= 0.7:
+        if is_tree_crop:
+            profile_id = "sulfur_contact"
+        elif risk_level >= 0.7:
             profile_id = "azoxystrobin_qoi"
         elif risk_level >= 0.45:
             profile_id = "sulfur_contact"
@@ -326,7 +329,7 @@ def recommend_protection(
     elif disease == "botrytis":
         profile_id = "botrytis_sdhi" if risk_level >= 0.65 else "botrytis_contact"
     elif disease == "alternaria":
-        profile_id = "azoxystrobin_qoi" if risk_level >= 0.65 else "mancozeb_contact"
+        profile_id = "mancozeb_contact" if is_tree_crop else ("azoxystrobin_qoi" if risk_level >= 0.65 else "mancozeb_contact")
     elif disease == "rust":
         profile_id = "propiconazole_dmi" if risk_level >= 0.6 else "sulfur_contact"
     elif disease == "fusarium":
