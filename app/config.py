@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     ADMIN_EMAILS: str = ""
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8080"
 
+    # Email / SMTP
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = ""
+    SMTP_FROM_NAME: str = "Smart Gardener"
+    SMTP_USE_TLS: bool = True
+
     # ── Security ──────────────────────────────────────────────────────────────
     SECRET_KEY: str = "change-me-in-production"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15        # §2.3: short-lived (was 1440)

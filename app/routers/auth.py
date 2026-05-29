@@ -27,6 +27,7 @@ from app.schemas.auth import (
     RefreshRequest, UserResponse, PasswordResetRequest,
 )
 from app.dependencies import get_current_user, blacklist_token
+from app.services.email_service import send_password_reset_email
 from app.services.subscription_service import TIER_LIMITS
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -167,7 +168,9 @@ async def request_password_reset(
     data: PasswordResetRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    await db.scalar(select(User).where(User.email == data.email))
+    user = await db.scalar(select(User).where(User.email == data.email))
+    if user:
+        await send_password_reset_email(user.email)
     return {"message": "Якщо цей email зареєстровано — інструкції надіслано"}
 
 
