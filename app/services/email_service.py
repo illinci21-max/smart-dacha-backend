@@ -6,6 +6,7 @@ import asyncio
 import logging
 import smtplib
 from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
 
 from app.config import settings
 
@@ -26,11 +27,11 @@ async def send_password_reset_email(email: str) -> bool:
         logger.warning("SMTP is not configured; password reset email skipped")
         return False
 
-    subject = "Відновлення доступу до Smart Gardener"
+    subject = "Smart Gardener account request"
     body = (
-        "Ви запросили відновлення доступу до Smart Gardener.\n\n"
-        "Якщо це були ви, зверніться до адміністратора або напишіть у підтримку, "
-        "щоб змінити пароль безпечно.\n\n"
+        "Добрий день.\n\n"
+        "Ми отримали запит щодо доступу до акаунта Smart Gardener.\n"
+        "Якщо це були ви, напишіть у підтримку: support@smartgardener.top\n\n"
         "Якщо ви не робили цей запит, просто проігноруйте цей лист.\n\n"
         "Розумний Дачник"
     )
@@ -39,6 +40,9 @@ async def send_password_reset_email(email: str) -> bool:
     message["Subject"] = subject
     message["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
     message["To"] = email
+    message["Reply-To"] = settings.SMTP_FROM_EMAIL
+    message["Date"] = formatdate(localtime=False)
+    message["Message-ID"] = make_msgid(domain="smartgardener.top")
     message.set_content(body)
 
     try:
