@@ -39,6 +39,25 @@ class PasswordResetRequest(BaseModel):
     email: EmailStr
 
 
+class PasswordResetConfirmRequest(BaseModel):
+    email: EmailStr
+    code: str
+    new_password: str
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, v: str) -> str:
+        code = "".join(ch for ch in v.strip() if ch.isdigit())
+        if len(code) != 6:
+            raise ValueError("Код має містити 6 цифр")
+        return code
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        return RegisterRequest.validate_password(v)
+
+
 class UserResponse(BaseModel):
     # FIX: UUID замість str для id
     id: UUID

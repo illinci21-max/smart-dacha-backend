@@ -9,6 +9,9 @@ FIXES from Code Review:
   §S-10 — token type validation on refresh
 """
 from datetime import datetime, timedelta, timezone
+import hashlib
+import hmac
+import secrets
 from typing import Annotated
 from uuid import uuid4
 
@@ -25,6 +28,7 @@ from app.models.user import User
 from app.schemas.auth import (
     RegisterRequest, LoginRequest, TokenResponse,
     RefreshRequest, UserResponse, PasswordResetRequest,
+    PasswordResetConfirmRequest,
 )
 from app.dependencies import get_current_user, blacklist_token
 from app.services.email_service import send_password_reset_email
@@ -60,6 +64,12 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+
+
+def _password_reset_code_hash(user_id: str, code: str) -> str:
+    message = f"{user_id}:{code}".encode("utf-8")
+    secret = settings.SECRET_KEY.encode("utf-8")
+    return hmac.new(secret, message, hashlib.sha256).hexdigest()
 
 
 # ── Token creation ────────────────────────────────────────────────────────────
@@ -168,10 +178,58 @@ async def request_password_reset(
     data: PasswordResetRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    user = await db.scalar(select(User).where(User.email == data.email))
+    user = await db.scalar(
+        select(User).where(User.email == data.email, User.is_active.is_(True))
+    )
     if user:
-        await send_password_reset_email(user.email)
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        expires_minutes = 30
+        user.password_reset_code_hash = _password_reset_code_hash(str(user.id), code)
+        user.password_reset_expires_at = datetime.now(timezone.utc) + timedelta(
+            minutes=expires_minutes
+        )
+        await db.commit()
+        await send_password_reset_email(user.email, code, expires_minutes)
     return {"message": "Якщо цей email зареєстровано — інструкції надіслано"}
+
+
+@router.post("/password-reset/confirm")
+@_rate_limit("10/minute")
+async def confirm_password_reset(
+    request: Request,
+    data: PasswordResetConfirmRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    user = await db.scalar(
+        select(User).where(User.email == data.email, User.is_active.is_(True))
+    )
+    now = datetime.now(timezone.utc)
+    invalid_error = HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Невірний або прострочений код відновлення",
+    )
+
+    expires_at = user.password_reset_expires_at if user else None
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+    if (
+        not user
+        or not user.password_reset_code_hash
+        or not expires_at
+        or expires_at < now
+    ):
+        raise invalid_error
+
+    expected_hash = _password_reset_code_hash(str(user.id), data.code)
+    if not hmac.compare_digest(expected_hash, user.password_reset_code_hash):
+        raise invalid_error
+
+    user.password_hash = hash_password(data.new_password)
+    user.password_reset_code_hash = None
+    user.password_reset_expires_at = None
+    await db.commit()
+    return {"message": "Пароль оновлено"}
 
 
 # ── Private ───────────────────────────────────────────────────────────────────

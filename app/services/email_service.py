@@ -22,17 +22,21 @@ def smtp_configured() -> bool:
     )
 
 
-async def send_password_reset_email(email: str) -> bool:
+async def send_password_reset_email(
+    email: str, code: str, expires_minutes: int = 30
+) -> bool:
     if not smtp_configured():
         logger.warning("SMTP is not configured; password reset email skipped")
         return False
 
-    subject = "Smart Gardener account request"
+    subject = "Smart Gardener password reset code"
     body = (
         "Добрий день.\n\n"
-        "Ми отримали запит щодо доступу до акаунта Smart Gardener.\n"
-        "Якщо це були ви, напишіть у підтримку: support@smartgardener.top\n\n"
-        "Якщо ви не робили цей запит, просто проігноруйте цей лист.\n\n"
+        "Ми отримали запит на відновлення пароля Smart Gardener.\n\n"
+        f"Ваш код: {code}\n\n"
+        f"Код діє {expires_minutes} хвилин. Введіть його у додатку разом із новим паролем.\n\n"
+        "Якщо ви не робили цей запит, просто проігноруйте цей лист.\n"
+        "Підтримка: support@smartgardener.top\n\n"
         "Розумний Дачник"
     )
 

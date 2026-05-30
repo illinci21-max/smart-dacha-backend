@@ -36,4 +36,6 @@ def test_core_public_routes_are_registered():
 
     assert ("GET", "/health") in routes
     assert ("POST", "/api/v1/auth/login") in routes
+    assert ("POST", "/api/v1/auth/password-reset") in routes
+    assert ("POST", "/api/v1/auth/password-reset/confirm") in routes
     assert ("GET", "/api/v1/catalog/crops") in routes

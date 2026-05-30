@@ -16,6 +16,10 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str | None] = mapped_column(String(100))
     firebase_token: Mapped[str | None] = mapped_column(String(1000))
+    password_reset_code_hash: Mapped[str | None] = mapped_column(String(128))
+    password_reset_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
 
     # SaaS
     subscription_tier: Mapped[str] = mapped_column(
