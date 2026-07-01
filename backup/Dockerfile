@@ -1,5 +1,5 @@
 # Lightweight backup runner - postgresql-client + rclone + supercronic
-FROM alpine:3.20
+FROM alpine:3.24
 
 ENV TZ=Europe/Kyiv
 ENV SUPERCRONIC_VERSION=v0.2.33
